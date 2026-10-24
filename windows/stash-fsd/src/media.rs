@@ -461,9 +461,12 @@ async fn run_process(
     let mut client_gone = false;
     let mut buf = vec![0u8; STDOUT_CHUNK];
     loop {
+        // tx.closed() fires when the client cancels the call (tonic drops
+        // the response stream), even while the process writes no stdout.
         let n = tokio::select! {
             r = stdout.read(&mut buf) => match r { Ok(n) => n, Err(_) => 0 },
             _ = &mut deadline => { timed_out = true; break; }
+            _ = tx.closed() => { client_gone = true; break; }
         };
         if n == 0 {
             break;
@@ -625,6 +628,24 @@ mod tests {
         run_process("/nonexistent/ffmpeg".into(), vec![], None, vec![], Duration::from_secs(1), tx).await;
         let e = rx.recv().await.unwrap().unwrap_err();
         assert_eq!(e.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_process_killed_when_client_cancels() {
+        let d = tempfile::tempdir().unwrap();
+        let pidfile = d.path().join("pid");
+        let script = format!("echo $$ > {}; exec sleep 30", pidfile.display());
+        let (tx, rx) = mpsc::channel(8);
+        let start = std::time::Instant::now();
+        let task = tokio::spawn(run_process("sh".into(), vec!["-c".into(), script], None, vec![], Duration::from_secs(60), tx));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let pid = std::fs::read_to_string(&pidfile).unwrap().trim().to_string();
+        assert!(Path::new(&format!("/proc/{pid}")).exists());
+        drop(rx); // what tonic does when the client cancels the call
+        tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
+        assert!(start.elapsed() < Duration::from_secs(10));
+        assert!(!Path::new(&format!("/proc/{pid}")).exists(), "process {pid} still alive");
     }
 
     #[test]

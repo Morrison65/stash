@@ -12,10 +12,15 @@ http_listen   = "0.0.0.0:7701"
 shared_secret = "change-me-to-a-long-random-string"
 
 [access]
-# Only paths below these roots are accessible. A Windows service running as
-# LocalSystem does not see per-user mapped drive letters: use local drives,
-# UNC paths (//nas/share/media) or run the service as that user.
-roots = ["U:/", "D:/Media"]
+# Only paths below these roots are accessible. Drive roots may be written
+# "U:" or "U:/"; UNC roots as \\server\share\dir, //server/share/dir or
+# UNC:/server/share/dir (use a TOML literal string '...' for backslashes).
+#
+# The service runs as LocalSystem, which does not see drive letters mapped by
+# a user. Prefer UNC roots for NAS storage. The share must then be accessible
+# to the machine account (DOMAIN\HOST$); otherwise run the service as a user
+# account that has access to the share.
+roots = ["D:/Media", '\\LIL_NAS_X\MainStoragePool\StashLib']
 
 [tools]
 ffmpeg  = ""   # e.g. "C:/ffmpeg/bin/ffmpeg.exe"; empty = ffmpeg on PATH

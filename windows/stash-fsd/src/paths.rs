@@ -1,10 +1,15 @@
 //! Path handling between the wire form and the native form, plus root
 //! enforcement.
 //!
-//! Wire form: Windows paths written with forward slashes, e.g.
-//! `U:/Media/clip.mp4` or `//nas/share/clip.mp4`. Backslashes are accepted
-//! on input. Paths are cleaned lexically (`.`/`..`/duplicate separators) and
-//! a `..` that would climb above the volume root is rejected.
+//! Wire form: Windows paths written with forward slashes. Canonical output:
+//! `U:/Media/clip.mp4`, drive root `U:`, UNC `UNC:/nas/share/clip.mp4`
+//! (a pseudo drive, because Go's `filepath.Clean` on Linux would collapse a
+//! leading `//`). Accepted on input: any letter case for the drive and the
+//! `UNC:` prefix, `U:/`, backslashes, `//nas/share` and `\\nas\share`.
+//! A rooted path without drive (`/x`) is rejected as INVALID_ARGUMENT,
+//! relative paths as PERMISSION_DENIED. Paths are cleaned lexically
+//! (`.`/`..`/duplicate separators) and a `..` that would climb above the
+//! volume root (drive or `//server/share`) is rejected.
 //!
 //! The parser has two styles so the whole service can be tested on Linux:
 //! the Windows style (used on Windows builds) and a Unix style (used on
@@ -55,7 +60,7 @@ pub fn host_windows_style() -> bool {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Prefix {
-    /// `X:` (letter case as given).
+    /// `X:` (upper-cased).
     Drive(char),
     /// `//server/share`.
     Unc(String, String),
@@ -113,10 +118,18 @@ impl WirePath {
             return Err(PathError::Invalid(format!("device paths are not supported: {input}")));
         }
 
+        // Canonical wire form for UNC: "UNC:/server/share/..." (any case).
+        if let Some(rest) = strip_prefix_ci(&s, "UNC:") {
+            if !rest.starts_with('/') {
+                return Err(PathError::Invalid(format!("UNC path needs UNC:/server/share: {input}")));
+            }
+            return Self::parse_unc(rest, input);
+        }
+
         let b = s.as_bytes();
         if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
-            // "U:" alone is treated as the drive root: Go's filepath.Dir on
-            // Linux turns "U:/clip.mp4" into "U:".
+            // "U:" alone is the drive root: Go's filepath.Clean on Linux turns
+            // "U:/" into "U:" (and filepath.Dir("U:/x") is "U:").
             let rest = &s[2..];
             if !rest.is_empty() && !rest.starts_with('/') {
                 // "U:foo" is relative to the current directory of drive U.
@@ -124,64 +137,81 @@ impl WirePath {
             }
             let comps = clean_components(rest, input)?;
             return Ok(WirePath {
-                prefix: Prefix::Drive(b[0] as char),
+                prefix: Prefix::Drive(b[0].to_ascii_uppercase() as char),
                 comps,
             });
         }
 
-        if let Some(rest) = s.strip_prefix('/') {
-            // "//server/share/..." is UNC. A single leading slash is also
-            // read as UNC because Go's filepath.Clean on Linux collapses the
-            // leading "//" of UNC paths; a drive-relative root path is never
-            // meaningful for a service.
-            let rest = rest.trim_start_matches('/');
-            let mut it = rest.splitn(3, '/');
-            let server = it.next().unwrap_or("");
-            let share = it.next().unwrap_or("");
-            if server.is_empty() || share.is_empty() || server == "." || server == ".." || share == "." || share == ".." {
-                return Err(PathError::Invalid(format!("UNC path needs //server/share: {input}")));
-            }
-            let tail = it.next().unwrap_or("");
-            let comps = clean_components(tail, input)?;
-            return Ok(WirePath {
-                prefix: Prefix::Unc(server.to_string(), share.to_string()),
-                comps,
-            });
+        // Native UNC form "//server/share/..." (or "\\server\share\...").
+        if s.starts_with("//") {
+            return Self::parse_unc(&s[1..], input);
+        }
+
+        if s.starts_with('/') {
+            // A rooted path without drive is not a usable Windows path (and
+            // "/server/share" is what Go's filepath.Clean makes of a UNC path;
+            // UNC paths must use the "UNC:/" form).
+            return Err(PathError::Invalid(format!(
+                "not a Windows path (use U:/... or UNC:/server/share/...): {input}"
+            )));
         }
 
         Err(PathError::OutsideRoots(input.to_string()))
     }
 
-    /// Wire form: forward slashes, drive roots as `U:/`.
-    pub fn to_wire(&self) -> String {
-        self.render('/')
-    }
-
-    /// Native form for the host OS.
-    pub fn to_native(&self) -> PathBuf {
-        match self.prefix {
-            Prefix::UnixRoot => PathBuf::from(self.render('/')),
-            _ => PathBuf::from(self.render(if cfg!(windows) { '\\' } else { '/' })),
+    /// Parses "/server/share/rest" (leading slashes trimmed).
+    fn parse_unc(rest: &str, input: &str) -> Result<WirePath, PathError> {
+        let mut it = rest.split('/').filter(|c| !c.is_empty());
+        let server = it.next().unwrap_or("");
+        let share = it.next().unwrap_or("");
+        let bad = |c: &str| c.is_empty() || c == "." || c == "..";
+        if bad(server) || bad(share) {
+            return Err(PathError::Invalid(format!("UNC path needs a server and a share: {input}")));
         }
+        let tail: Vec<&str> = it.collect();
+        let comps = clean_components(&tail.join("/"), input)?;
+        Ok(WirePath {
+            prefix: Prefix::Unc(server.to_string(), share.to_string()),
+            comps,
+        })
     }
 
-    fn render(&self, sep: char) -> String {
+    /// Canonical wire form: forward slashes, upper-case drive letter, drive
+    /// roots as `U:`, UNC paths as `UNC:/server/share/...`.
+    pub fn to_wire(&self) -> String {
+        let mut out = match &self.prefix {
+            Prefix::Drive(c) => format!("{c}:"),
+            Prefix::Unc(server, share) => format!("UNC:/{server}/{share}"),
+            Prefix::UnixRoot => {
+                if self.comps.is_empty() {
+                    return "/".to_string();
+                }
+                String::new()
+            }
+        };
+        for c in &self.comps {
+            out.push('/');
+            out.push_str(c);
+        }
+        out
+    }
+
+    /// Native form for the host OS (`U:\x`, `\\server\share\x`; `/` on
+    /// non-Windows hosts, used only by tests for Windows-style paths).
+    pub fn to_native(&self) -> PathBuf {
+        let sep = if cfg!(windows) { '\\' } else { '/' };
         let mut out = match &self.prefix {
             Prefix::Drive(c) => format!("{c}:{sep}"),
             Prefix::Unc(server, share) => format!("{sep}{sep}{server}{sep}{share}"),
             Prefix::UnixRoot => "/".to_string(),
         };
         for (i, c) in self.comps.iter().enumerate() {
-            let needs_sep = match self.prefix {
-                Prefix::Unc(..) => true,
-                _ => i > 0,
-            };
-            if needs_sep {
+            if i > 0 || matches!(self.prefix, Prefix::Unc(..)) {
                 out.push(sep);
             }
             out.push_str(c);
         }
-        out
+        PathBuf::from(out)
     }
 
     /// Base name; the full path for volume roots.
@@ -279,8 +309,8 @@ fn comp_eq(a: &str, b: &str, ci: bool) -> bool {
     a.to_lowercase() == b.to_lowercase()
 }
 
-/// Converts a native path (e.g. from `canonicalize`) to the wire form,
-/// stripping verbatim prefixes.
+/// Converts a native path (e.g. from `canonicalize`) to the canonical wire
+/// form, stripping verbatim prefixes.
 pub fn native_to_wire(p: &Path) -> String {
     let s = p.to_string_lossy();
     if cfg!(windows) {
@@ -291,11 +321,11 @@ pub fn native_to_wire(p: &Path) -> String {
 }
 
 pub fn native_to_wire_windows(s: &str) -> String {
-    if let Some(rest) = strip_prefix_ci(s, r"\\?\UNC\") {
-        return format!("//{}", rest.replace('\\', "/"));
+    match WirePath::parse_style(s, true) {
+        Ok(p) => p.to_wire(),
+        // not an absolute Windows path: just normalise the separators
+        Err(_) => s.replace('\\', "/"),
     }
-    let s = s.strip_prefix(r"\\?\").unwrap_or(s);
-    s.replace('\\', "/")
 }
 
 /// Converts a configured path (forward or back slashes) to native form
@@ -383,13 +413,42 @@ mod tests {
     fn windows_drive_paths() {
         assert_eq!(w("U:/Media/x.mp4").unwrap(), "U:/Media/x.mp4");
         assert_eq!(w(r"U:\Media\x.mp4").unwrap(), "U:/Media/x.mp4");
-        assert_eq!(w("u:/Media//sub/./x.mp4").unwrap(), "u:/Media/sub/x.mp4");
+        assert_eq!(w("u:/Media//sub/./x.mp4").unwrap(), "U:/Media/sub/x.mp4");
         assert_eq!(w("U:/Media/sub/../x.mp4").unwrap(), "U:/Media/x.mp4");
         assert_eq!(w("U:/Media/").unwrap(), "U:/Media");
-        assert_eq!(w("U:/").unwrap(), "U:/");
-        assert_eq!(w("U:").unwrap(), "U:/");
-        assert_eq!(w("U:\\").unwrap(), "U:/");
-        assert_eq!(w("U:/a/..").unwrap(), "U:/");
+        // drive roots are "U:" on the wire; "U:/" and "U:\" are accepted
+        assert_eq!(w("U:/").unwrap(), "U:");
+        assert_eq!(w("U:").unwrap(), "U:");
+        assert_eq!(w("u:").unwrap(), "U:");
+        assert_eq!(w("U:\\").unwrap(), "U:");
+        assert_eq!(w("U:/a/..").unwrap(), "U:");
+    }
+
+    #[test]
+    fn canonical_round_trips() {
+        for s in [
+            "U:",
+            "U:/Media/x.mp4",
+            "UNC:/nas/share",
+            "UNC:/nas/share/dir/x.mp4",
+            "UNC:/LIL_NAS_X/MainStoragePool/StashLib/a b/c.mkv",
+        ] {
+            let p = WirePath::parse_style(s, true).unwrap();
+            assert_eq!(p.to_wire(), s, "round trip");
+            let native = p.to_native().to_string_lossy().into_owned();
+            assert_eq!(native_to_wire_windows(&native.replace('/', "\\")), s, "native round trip");
+        }
+        for (input, want) in [
+            ("u:/media/X.mp4", "U:/media/X.mp4"),
+            (r"\\nas\share\x", "UNC:/nas/share/x"),
+            ("//nas/share/x", "UNC:/nas/share/x"),
+            ("unc:/nas/share/x", "UNC:/nas/share/x"),
+            ("Unc:/nas//share/./x/", "UNC:/nas/share/x"),
+            (r"UNC:\nas\share\x", "UNC:/nas/share/x"),
+            ("UNC://nas/share/x", "UNC:/nas/share/x"),
+        ] {
+            assert_eq!(w(input).unwrap(), want, "{input}");
+        }
     }
 
     #[test]
@@ -410,21 +469,34 @@ mod tests {
 
     #[test]
     fn windows_unc_paths() {
-        assert_eq!(w("//nas/share/x.mp4").unwrap(), "//nas/share/x.mp4");
-        assert_eq!(w(r"\\nas\share\dir\x.mp4").unwrap(), "//nas/share/dir/x.mp4");
-        assert_eq!(w("//nas/share").unwrap(), "//nas/share");
-        assert_eq!(w("//nas/share/").unwrap(), "//nas/share");
-        // Go's filepath.Clean on Linux collapses the leading "//".
-        assert_eq!(w("/nas/share/x.mp4").unwrap(), "//nas/share/x.mp4");
+        assert_eq!(w("//nas/share/x.mp4").unwrap(), "UNC:/nas/share/x.mp4");
+        assert_eq!(w(r"\\nas\share\dir\x.mp4").unwrap(), "UNC:/nas/share/dir/x.mp4");
+        assert_eq!(w("//nas/share").unwrap(), "UNC:/nas/share");
+        assert_eq!(w("//nas/share/").unwrap(), "UNC:/nas/share");
         assert!(matches!(w("//nas"), Err(PathError::Invalid(_))));
+        assert!(matches!(w("UNC:/nas"), Err(PathError::Invalid(_))));
+        assert!(matches!(w("UNC:"), Err(PathError::Invalid(_))));
+        assert!(matches!(w("UNC:nas/share"), Err(PathError::Invalid(_))));
+        assert!(matches!(w("UNC:/nas/.."), Err(PathError::Invalid(_))));
         assert!(matches!(w("//nas/share/.."), Err(PathError::OutsideRoots(_))));
+        assert!(matches!(w("UNC:/nas/share/a/../.."), Err(PathError::OutsideRoots(_))));
         assert!(matches!(w("//./pipe/x"), Err(PathError::Invalid(_))));
+    }
+
+    #[test]
+    fn rooted_without_drive_rejected() {
+        // The old "single leading slash means UNC" workaround is gone.
+        assert!(matches!(w("/nas/share/x.mp4"), Err(PathError::Invalid(_))));
+        assert!(matches!(w("/x"), Err(PathError::Invalid(_))));
+        assert!(matches!(w(r"\x"), Err(PathError::Invalid(_))));
+        let s: tonic::Status = w("/x").unwrap_err().into();
+        assert_eq!(s.code(), tonic::Code::InvalidArgument);
     }
 
     #[test]
     fn windows_verbatim_prefixes() {
         assert_eq!(w(r"\\?\U:\Media\x.mp4").unwrap(), "U:/Media/x.mp4");
-        assert_eq!(w(r"\\?\UNC\nas\share\x").unwrap(), "//nas/share/x");
+        assert_eq!(w(r"\\?\UNC\nas\share\x").unwrap(), "UNC:/nas/share/x");
     }
 
     #[test]
@@ -435,16 +507,24 @@ mod tests {
         let r = WirePath::parse_style("U:", true).unwrap();
         let expected = if cfg!(windows) { r"U:\" } else { "U:/" };
         assert_eq!(r.to_native(), PathBuf::from(expected));
-        let unc = WirePath::parse_style("//nas/share/a", true).unwrap();
-        let expected = if cfg!(windows) { r"\\nas\share\a" } else { "//nas/share/a" };
-        assert_eq!(unc.to_native(), PathBuf::from(expected));
+        for input in ["//nas/share/a", "UNC:/nas/share/a", "unc:/nas/share/a"] {
+            let unc = WirePath::parse_style(input, true).unwrap();
+            let expected = if cfg!(windows) { r"\\nas\share\a" } else { "//nas/share/a" };
+            assert_eq!(unc.to_native(), PathBuf::from(expected));
+        }
+        let uroot = WirePath::parse_style("UNC:/nas/share", true).unwrap();
+        let expected = if cfg!(windows) { r"\\nas\share" } else { "//nas/share" };
+        assert_eq!(uroot.to_native(), PathBuf::from(expected));
     }
 
     #[test]
-    fn native_to_wire_strips_verbatim() {
+    fn native_to_wire_canonical() {
         assert_eq!(native_to_wire_windows(r"\\?\U:\Media\x.mp4"), "U:/Media/x.mp4");
-        assert_eq!(native_to_wire_windows(r"\\?\UNC\nas\share\x"), "//nas/share/x");
+        assert_eq!(native_to_wire_windows(r"\\?\u:\Media\x.mp4"), "U:/Media/x.mp4");
+        assert_eq!(native_to_wire_windows(r"\\?\UNC\nas\share\x"), "UNC:/nas/share/x");
+        assert_eq!(native_to_wire_windows(r"\\nas\share\x"), "UNC:/nas/share/x");
         assert_eq!(native_to_wire_windows(r"C:\ProgramData\stash-fsd"), "C:/ProgramData/stash-fsd");
+        assert_eq!(native_to_wire_windows(r"c:\"), "C:");
     }
 
     #[test]
@@ -452,13 +532,16 @@ mod tests {
         let p = WirePath::parse_style("U:/Media/x.mp4", true).unwrap();
         assert_eq!(p.name(), "x.mp4");
         assert_eq!(p.parent().unwrap().to_wire(), "U:/Media");
-        assert_eq!(p.parent().unwrap().parent().unwrap().to_wire(), "U:/");
+        assert_eq!(p.parent().unwrap().parent().unwrap().to_wire(), "U:");
         assert!(p.parent().unwrap().parent().unwrap().parent().is_none());
         let r = WirePath::parse_style("U:/", true).unwrap();
-        assert_eq!(r.name(), "U:/");
+        assert_eq!(r.name(), "U:");
         assert_eq!(r.join("a").join("b").to_wire(), "U:/a/b");
         let unc = WirePath::parse_style("//nas/share", true).unwrap();
-        assert_eq!(unc.join("x").to_wire(), "//nas/share/x");
+        assert_eq!(unc.name(), "UNC:/nas/share");
+        assert_eq!(unc.join("x").to_wire(), "UNC:/nas/share/x");
+        assert_eq!(unc.join("x").parent().unwrap().to_wire(), "UNC:/nas/share");
+        assert!(unc.parent().is_none());
     }
 
     #[test]
@@ -494,6 +577,41 @@ mod tests {
         assert!(matches!(r.check("//nas/share/other"), Err(PathError::OutsideRoots(_))));
         assert!(matches!(r.check("//nas/other/Lib"), Err(PathError::OutsideRoots(_))));
         assert!(matches!(r.check("relative"), Err(PathError::OutsideRoots(_))));
+        assert_eq!(r.check("u:/x").unwrap().to_wire(), "U:/x");
+    }
+
+    #[test]
+    fn roots_unc_forms_and_escapes() {
+        // the same UNC root written three ways
+        for root in [r"\\LIL_NAS_X\MainStoragePool\StashLib", "//LIL_NAS_X/MainStoragePool/StashLib", "UNC:/LIL_NAS_X/MainStoragePool/StashLib"] {
+            let r = roots(&[root]);
+            assert_eq!(r.list(), vec!["UNC:/LIL_NAS_X/MainStoragePool/StashLib".to_string()]);
+            let ok = r.check("UNC:/LIL_NAS_X/MainStoragePool/StashLib/Scenes/a.mp4").unwrap();
+            assert_eq!(ok.to_wire(), "UNC:/LIL_NAS_X/MainStoragePool/StashLib/Scenes/a.mp4");
+            assert!(r.check("unc:/lil_nas_x/mainstoragepool/stashlib/x").is_ok());
+            assert!(r.check(r"\\lil_nas_x\MainStoragePool\StashLib\x").is_ok());
+            assert!(r.check("//LIL_NAS_X/MainStoragePool/StashLib").is_ok());
+            assert!(r.is_root(&r.check("UNC:/LIL_NAS_X/MainStoragePool/StashLib/").unwrap()));
+            // escapes and siblings
+            assert!(matches!(r.check("UNC:/LIL_NAS_X/MainStoragePool/StashLib/../Private/x"), Err(PathError::OutsideRoots(_))));
+            assert!(matches!(r.check("UNC:/LIL_NAS_X/MainStoragePool/StashLibX/x"), Err(PathError::OutsideRoots(_))));
+            assert!(matches!(r.check("UNC:/LIL_NAS_X/MainStoragePool"), Err(PathError::OutsideRoots(_))));
+            assert!(matches!(r.check("UNC:/LIL_NAS_X/MainStoragePool/../../x"), Err(PathError::OutsideRoots(_))));
+            assert!(matches!(r.check("UNC:/OTHER/MainStoragePool/StashLib/x"), Err(PathError::OutsideRoots(_))));
+            assert!(matches!(r.check("U:/MainStoragePool/StashLib/x"), Err(PathError::OutsideRoots(_))));
+            assert!(matches!(r.check("/LIL_NAS_X/MainStoragePool/StashLib/x"), Err(PathError::Invalid(_))));
+        }
+    }
+
+    #[test]
+    fn drive_root_forms() {
+        for root in ["U:", "U:/", r"U:\", "u:"] {
+            let r = roots(&[root]);
+            assert_eq!(r.list(), vec!["U:".to_string()]);
+            assert!(r.check("U:/Media/x").is_ok());
+            assert!(r.is_root(&r.check("u:/").unwrap()));
+            assert!(matches!(r.check("V:/x"), Err(PathError::OutsideRoots(_))));
+        }
     }
 
     #[test]

@@ -264,6 +264,8 @@ mod tests {
         assert_eq!(c.limits.walk_batch_size, 512);
         // the example ships with the placeholder secret and must be refused
         assert!(c.validate().is_err());
+        let roots = Roots::with_style(&c.access.roots, true, true).unwrap();
+        assert_eq!(roots.list(), vec!["D:/Media", "UNC:/LIL_NAS_X/MainStoragePool/StashLib"]);
     }
 
     #[test]
