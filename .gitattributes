@@ -4,3 +4,10 @@ go.sum text eol=lf
 vendor/** -text
 ui/v2.5/**/*.ts* text eol=lf
 ui/v2.5/**/*.scss text eol=lf
+
+*.sh text eol=lf
+*.proto text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.conf text eol=lf
+Dockerfile* text eol=lf
