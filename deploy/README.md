@@ -46,6 +46,11 @@ In **Settings → Library** add library paths as Windows paths (`U:\Lib\Videos`
 or `U:/Lib/Videos`; UNC as `\\nas\share\dir`). They are stored as
 `U:/Lib/Videos` and `UNC:/nas/share/dir`.
 
+The delete trash folder (`delete_trash_path`) is used by stash-fsd, so it
+must be a Windows path **inside one of the stash-fsd `roots`** (e.g. add
+`C:/Users/<you>/Desktop/Stash-Trash` to `roots`); otherwise deletes that
+use the trash are refused.
+
 ## Adopting an existing database
 
 The API keeps SQLite at `/database/stash-go.sqlite` (volume `database`).
