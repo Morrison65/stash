@@ -6,6 +6,7 @@ import { Setting } from "./Inputs";
 import { SettingSection } from "./SettingSection";
 import { PatchContainerComponent } from "src/patch";
 import { ExternalLink } from "../Shared/ExternalLink";
+import { SettingsUIConfigTroubleshooting } from "./SettingsUIConfigTroubleshooting";
 
 const SettingsToolsSection = PatchContainerComponent("SettingsToolsSection");
 
@@ -48,6 +49,7 @@ export const SettingsToolsPanel: React.FC = () => {
           />
         </SettingsToolsSection>
       </SettingSection>
+      <SettingsUIConfigTroubleshooting />
     </>
   );
 };

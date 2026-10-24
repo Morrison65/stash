@@ -21,5 +21,8 @@
     "useDefineForClassFields": true,
     "types": ["vite/client", "dom-screen-wake-lock"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  // unit tests pull in vitest's Node typings; they are checked with
+  // tsconfig.test.json instead
+  "exclude": ["src/**/*.test.ts"]
 }
