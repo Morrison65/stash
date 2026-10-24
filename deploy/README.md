@@ -37,10 +37,9 @@ cp .env.example .env              # set STASH_FSD_SECRET to the same secret
 docker compose up -d --build
 ```
 
-Open `http://localhost:9990` (port: `STASH_GATEWAY_PORT`). The service worker
-that keeps the UI configuration in the browser needs a secure context:
-`localhost`/`127.0.0.1` qualify; for access from other devices put TLS in
-front of the gateway, otherwise the in-page fallback is used.
+Open `http://localhost:9990` (port: `STASH_GATEWAY_PORT`). The UI
+configuration is kept in the browser (IndexedDB, see
+`docs/architecture/ui-config.md`); this works over plain http on any address.
 
 In **Settings → Library** add library paths as Windows paths (`U:\Lib\Videos`
 or `U:/Lib/Videos`; UNC as `\\nas\share\dir`). They are stored as

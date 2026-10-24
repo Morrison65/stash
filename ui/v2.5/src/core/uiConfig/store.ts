@@ -1,7 +1,6 @@
 // Minimal IndexedDB wrapper holding the UI configuration.
 // Database "stash-ui", object store "config", keys "ui" (the map) and
-// "updatedAt" (ms since epoch). Used from both the service worker and the
-// page, so it must not depend on DOM-only APIs besides indexedDB.
+// "updatedAt" (ms since epoch). It depends on no DOM API besides indexedDB.
 
 import { UIConfigMap, isPlainObject } from "./operations";
 
@@ -72,7 +71,7 @@ function writeRecord(store: IDBObjectStore, ui: UIConfigMap, now: number) {
  * Runs `fn` inside a single readwrite transaction: the current record is
  * read, `fn` decides synchronously what to write (return no `write` to keep
  * it) and the transaction commits atomically - so concurrent writers (other
- * tabs, the service worker) never lose updates.
+ * tabs) never lose updates.
  */
 function transact<T>(
   fn: (current: IStoredUIConfig | undefined) => {

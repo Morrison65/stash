@@ -184,8 +184,7 @@ Please disable it on the server and refresh the page.`);
     httpLink
   );
 
-  // keeps configuration.ui in IndexedDB when the service worker is not
-  // controlling the page (see docs/architecture/ui-config.md)
+  // keeps configuration.ui in IndexedDB (see docs/architecture/ui-config.md)
   const uiConfigLink = createUIConfigLink({ graphqlURL: url.toString() });
 
   const link = from([errorLink, uiConfigLink, splitLink]);

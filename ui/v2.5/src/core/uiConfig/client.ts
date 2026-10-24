@@ -1,5 +1,5 @@
-// Page side of the browser-local UI configuration: service worker
-// registration, cross-tab cache updates and the troubleshooting actions.
+// Page side of the browser-local UI configuration: cross-tab cache updates,
+// the troubleshooting actions, and removal of the former service worker.
 
 import { ApolloCache, ApolloClient } from "@apollo/client";
 import * as GQL from "src/core/generated-graphql";
@@ -8,61 +8,43 @@ import {
   CHANNEL_NAME,
   IUIConfigUpdatedMessage,
   MESSAGE_UPDATED,
-  MESSAGE_WHOAMI,
 } from "./engine";
 import { UIConfigMap, UI_SYNC_HEADER, isPlainObject } from "./operations";
 import { getStoredUIConfig, putUIConfig } from "./store";
-import {
-  fetchServerUI,
-  isIndexedDBAvailable,
-  isServiceWorkerControlling,
-  tabId,
-} from "./link";
+import { fetchServerUI, isIndexedDBAvailable, tabId } from "./link";
 
-export const SERVICE_WORKER_FILE = "sw.js";
+// The UI config used to be handled by a service worker at <base>sw.js. It
+// added latency to every GraphQL request, so the in-page Apollo link
+// (link.ts) does it alone now; sw.js is a script that removes itself.
+const FORMER_SERVICE_WORKER_FILE = "sw.js";
 
-// service worker client id of this tab, learned via a whoami message
-let swClientId: string | undefined;
-let swVersion: string | undefined;
-
-export type UIConfigMode = "service-worker" | "in-page" | "unavailable";
+export type UIConfigMode = "in-page" | "unavailable";
 
 export interface IUIConfigStatus {
   mode: UIConfigMode;
   updatedAt?: number;
-  serviceWorkerVersion?: string;
 }
 
-function appScope() {
-  return new URL(baseURL, window.location.origin);
-}
-
-function askWhoAmI() {
-  navigator.serviceWorker?.controller?.postMessage({ type: MESSAGE_WHOAMI });
-}
-
-/**
- * Registers the UI config service worker with the app's scope (respecting
- * `<base href>`). Only in production builds: the dev server talks to the
- * GraphQL server cross-origin, where the in-page fallback is used.
- */
-export function registerServiceWorker() {
-  if (!import.meta.env.PROD) return;
+/** Unregisters the former UI config service worker of this app, if any. */
+export function removeServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
-
-  const scope = appScope();
+  const scope = new URL(baseURL, window.location.origin).href;
   navigator.serviceWorker
-    .register(new URL(SERVICE_WORKER_FILE, scope).href, {
-      scope: scope.pathname,
-    })
-    .catch((e) => {
-      // e.g. insecure context or a CSP without worker-src 'self'
-      // eslint-disable-next-line no-console
-      console.warn(
-        "UI config service worker unavailable, using in-page fallback",
-        e
-      );
-    });
+    .getRegistrations()
+    .then((registrations) =>
+      Promise.all(
+        registrations
+          .filter(
+            (r) =>
+              r.scope === scope &&
+              [r.active, r.waiting, r.installing].some((w) =>
+                w?.scriptURL.endsWith(`/${FORMER_SERVICE_WORKER_FILE}`)
+              )
+          )
+          .map((r) => r.unregister())
+      )
+    )
+    .catch(() => {});
 }
 
 function writeUIToCache(cache: ApolloCache<unknown>, ui: UIConfigMap) {
@@ -84,7 +66,7 @@ function writeUIToCache(cache: ApolloCache<unknown>, ui: UIConfigMap) {
 
 /**
  * Keeps this tab's Apollo cache in sync with UI config changes made in
- * other tabs (or by the service worker on behalf of other tabs).
+ * other tabs.
  */
 export function startUIConfigSync(client: ApolloClient<unknown>) {
   if (typeof BroadcastChannel !== "undefined") {
@@ -95,35 +77,16 @@ export function startUIConfigSync(client: ApolloClient<unknown>) {
         return;
       }
       // our own writes already updated the cache via the mutation result
-      if (msg.sourceClientId && msg.sourceClientId === swClientId) return;
+      if (msg.sourceClientId && msg.sourceClientId === tabId) return;
       writeUIToCache(client.cache, msg.ui);
     };
-  }
-
-  if (navigator.serviceWorker) {
-    navigator.serviceWorker.addEventListener("message", (e: MessageEvent) => {
-      const { data } = e;
-      if (isPlainObject(data) && data.type === MESSAGE_WHOAMI) {
-        swClientId =
-          typeof data.clientId === "string" ? data.clientId : undefined;
-        swVersion = typeof data.version === "string" ? data.version : undefined;
-      }
-    });
-    navigator.serviceWorker.addEventListener("controllerchange", askWhoAmI);
-    askWhoAmI();
   }
 }
 
 export async function getUIConfigStatus(): Promise<IUIConfigStatus> {
-  let mode: UIConfigMode = "unavailable";
-  if (isServiceWorkerControlling()) mode = "service-worker";
-  else if (isIndexedDBAvailable()) mode = "in-page";
-
-  let updatedAt: number | undefined;
-  if (isIndexedDBAvailable()) {
-    updatedAt = (await getStoredUIConfig())?.updatedAt;
-  }
-  return { mode, updatedAt, serviceWorkerVersion: swVersion };
+  if (!isIndexedDBAvailable()) return { mode: "unavailable" };
+  const updatedAt = (await getStoredUIConfig())?.updatedAt;
+  return { mode: "in-page", updatedAt };
 }
 
 function graphqlURL() {

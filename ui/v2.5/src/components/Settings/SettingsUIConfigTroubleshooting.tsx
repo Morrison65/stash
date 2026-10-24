@@ -14,8 +14,6 @@ import {
 } from "src/core/uiConfig/client";
 
 const modeMessageIDs: Record<IUIConfigStatus["mode"], string> = {
-  "service-worker":
-    "config.tools.troubleshooting.ui_config.mode_service_worker",
   "in-page": "config.tools.troubleshooting.ui_config.mode_in_page",
   unavailable: "config.tools.troubleshooting.ui_config.mode_unavailable",
 };
@@ -37,9 +35,6 @@ export const SettingsUIConfigTroubleshooting: React.FC = () => {
 
   useEffect(() => {
     refreshStatus();
-    const sw = navigator.serviceWorker;
-    sw?.addEventListener("controllerchange", refreshStatus);
-    return () => sw?.removeEventListener("controllerchange", refreshStatus);
   }, [refreshStatus]);
 
   async function onSync() {

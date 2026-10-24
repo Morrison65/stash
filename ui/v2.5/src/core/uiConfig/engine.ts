@@ -1,7 +1,6 @@
-// Orchestration shared by the service worker and the in-page Apollo link:
-// applies UI config mutations to IndexedDB, rewrites query results and
-// notifies other tabs. Transport specifics (fetch/Response vs Apollo
-// Observables) live in the callers.
+// Orchestration for the UI config Apollo link (./link.ts): applies UI config
+// mutations to IndexedDB, rewrites query results and notifies other tabs.
+// Transport specifics (Apollo Observables) live in the caller.
 
 import { DocumentNode } from "graphql";
 import {
@@ -27,14 +26,13 @@ import {
 
 export const CHANNEL_NAME = "stash-ui-config";
 export const MESSAGE_UPDATED = "stash-ui-config:updated";
-export const MESSAGE_WHOAMI = "stash-ui-config:whoami";
 
 /** Posted on the BroadcastChannel after every local UI config write. */
 export interface IUIConfigUpdatedMessage {
   type: typeof MESSAGE_UPDATED;
   ui: UIConfigMap;
   updatedAt: number;
-  /** service worker client id (or tab id) of the tab that caused it */
+  /** tab id of the tab that caused it */
   sourceClientId?: string;
 }
 

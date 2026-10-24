@@ -21,54 +21,64 @@ IndexedDB database `stash-ui`, object store `config`:
 | `updatedAt` | time of the last local write (ms since epoch) |
 
 Writes are read-modify-write inside one IndexedDB transaction, so concurrent
-writers (tabs, the service worker) do not lose updates. If nothing is stored
+writers (tabs) do not lose updates. If nothing is stored
 yet (first run, new browser), the store is seeded from the server's
 `configuration.ui`.
 
-## Mechanisms
+## Mechanism
 
-Code: `ui/v2.5/src/core/uiConfig/` (shared) and `ui/v2.5/src/sw/sw.ts`.
+Code: `ui/v2.5/src/core/uiConfig/`.
 
-1. **Service worker** (`<base>sw.js`, scope `<base>`, registered from
-   `src/index.tsx` in production builds). It intercepts JSON
-   `POST <base>graphql` requests from the app and from plugins, whether they
-   use the app's Apollo client or raw `fetch`. Single and batched (array)
-   bodies are supported. Multipart uploads, GET requests and websocket
-   traffic are not touched.
-   - **Queries** that select `configuration { ui }` at the root (aliases,
-     named or inline fragments, named or anonymous operations): the request
-     is forwarded, then every aliased `ui` value inside `configuration` is
-     replaced with the IndexedDB value.
-   - **Mutations whose root fields are only `configureUI` /
-     `configureUISetting`** are not forwarded. They are applied locally with
-     the server's semantics:
-     - `configureUI`: a non-null `input` replaces the whole map, then a
-       non-null `partial` is deep-merged into it (`utils.MergeMaps`).
-     - `configureUISetting`: the dotted key is set the way
-       `utils.NestedMap.Set` does it. A `null` value is stored as `null`; the
-       key is not deleted.
+An **Apollo link** in the app's client (`createUIConfigLink`, added in
+`createClient.ts` before the transport links) handles the operations of the
+app and of UI plugins that use the app's Apollo client:
 
-     Fields run in document order. Each field (by alias) returns the map as
-     it is after that field.
-   - **Mutations that mix** those fields with others are forwarded
-     unchanged. The UI part is also applied locally, and those fields in the
-     response are replaced with the local result.
-   - Requests with the header `X-Stash-UI-Sync: 1` are passed through
-     untouched.
-   - After each write, the change is posted on the BroadcastChannel
-     `stash-ui-config`, and other open tabs update their Apollo cache.
-   - The worker calls `skipWaiting` and `clients.claim`, and has a version
-     (`SW_VERSION`). On any internal error it forwards the original request.
-2. **In-page fallback** (Apollo link in `createClient.ts`). Service workers
-   need a secure context (https or localhost). Over plain http on a LAN
-   address, or before the worker controls the page, the same logic runs as
-   an Apollo link. The link checks on every request whether a worker
-   controls the page, and steps aside if one does.
+- **Queries** that select `configuration { ui }` at the root (aliases, named
+  or inline fragments, named or anonymous operations): the request is
+  forwarded, then every aliased `ui` value inside `configuration` is
+  replaced with the IndexedDB value.
+- **Mutations whose root fields are only `configureUI` /
+  `configureUISetting`** are not forwarded. They are applied locally with the
+  server's semantics:
+  - `configureUI`: a non-null `input` replaces the whole map, then a non-null
+    `partial` is deep-merged into it (`utils.MergeMaps`).
+  - `configureUISetting`: the dotted key is set the way
+    `utils.NestedMap.Set` does it. A `null` value is stored as `null`; the
+    key is not deleted.
+
+  Fields run in document order. Each field (by alias) returns the map as it
+  is after that field.
+- **Mutations that mix** those fields with others are forwarded unchanged.
+  The UI part is also applied locally, and those fields in the response are
+  replaced with the local result.
+- Operations with the header `X-Stash-UI-Sync: 1` (in the Apollo context) are
+  passed through untouched.
+- After each write, the change is posted on the BroadcastChannel
+  `stash-ui-config`, and other open tabs update their Apollo cache.
+
+Without IndexedDB (e.g. some private modes) everything goes to the server, as
+in upstream Stash.
+
+### The former service worker (removed 2026-10-24)
+
+Until 2026-10-24 a service worker (`<base>sw.js`) did the same for every
+`POST /graphql` of the page, including plugins' raw `fetch` calls, and the
+link only stood in when no worker controlled the page. The worker put itself
+in the path of every GraphQL request and added latency (up to seconds,
+growing over a page's lifetime), so it was removed:
+
+- the app no longer registers it and unregisters an existing registration on
+  load (`removeServiceWorker` in `client.ts`);
+- `ui/v2.5/public/sw.js` is now a script that removes itself: browsers that
+  still have the old worker fetch it on their next update check, it takes
+  over at once (no fetch handler) and unregisters. The gateway still serves
+  it with `Cache-Control: no-cache`. Both can be dropped once no browser has
+  the old worker any more.
 
 ## Troubleshooting
 
-**Settings → Tools → Troubleshooting** shows where the configuration is
-stored (service worker or in-page fallback) and when it was last updated. It
+**Settings → Tools → Troubleshooting** shows whether the configuration is
+stored in this browser and when it was last updated. It
 has two buttons:
 
 - **Sync UI configuration to server** sends the stored map with
@@ -78,25 +88,17 @@ has two buttons:
 - **Load UI configuration from server** asks for confirmation, then
   overwrites IndexedDB with the server's `configuration.ui` and reloads.
 
-## Deployment requirements (nginx)
+## Deployment requirements
 
-- The CSP must allow the worker script: `worker-src 'self' blob:`. The
-  current Go server only sends `worker-src blob:`, which blocks
-  registration. The app still works, but only through the in-page fallback.
-- Serve `sw.js` with `Cache-Control: no-cache` so that browsers pick up
-  updates quickly. It is emitted uncompressed under that stable name at the
-  build root, next to `index.html`.
-- `sw.js` is served from the app's base path (`<base href>`), so its default
-  scope already covers the app and no `Service-Worker-Allowed` header is
-  needed. You only need that header if the script is moved to a different
-  path than the scope.
-- Serve the app over https (or localhost) to get the service worker.
+None beyond serving the UI: the link runs in the page, so it works over
+plain http on any address. (The CSP still allows `worker-src 'self'` for the
+removal script above.)
 
 ## Limitations
 
-- **In-page fallback and raw-fetch plugins:** without the service worker,
-  plugins that call `fetch('/graphql')` directly bypass the Apollo link. They
-  read and write the server's copy, not the browser's.
+- **Raw-fetch plugins:** plugins that call `fetch('/graphql')` directly
+  bypass the Apollo link. They read and write the server's copy, not the
+  browser's.
 - **Per-browser configuration:** each browser or profile has its own
   configuration. Use the troubleshooting buttons to copy it.
 - **Server-side readers** of the UI config see only the last synced copy.
@@ -104,9 +106,6 @@ has two buttons:
   `ui.minimumPlayPercent` on the server.
 - **Mixed mutations:** the local UI write happens before the request is
   forwarded, so it is kept even if the server rejects the request.
-- **Dev server:** the Vite dev server (`pnpm start`) does not register the
-  service worker, because it talks to the GraphQL server cross-origin. Only
-  the in-page fallback is active there.
 - **Cache refresh across tabs:** another tab's cache is updated only if that
   tab has already loaded the `Configuration` query. Other queries that
   select `ui` pick up the new value on their next fetch.

@@ -1,6 +1,5 @@
-// The in-page fallback link, with fake-indexeddb and a mocked terminating
-// link standing in for the network. In Node there is no service worker, so
-// the link is always active.
+// The UI config link, with fake-indexeddb and a mocked terminating link
+// standing in for the network.
 import "fake-indexeddb/auto";
 import { describe, expect, it, vi } from "vitest";
 import {

@@ -1,11 +1,10 @@
-// Pure helpers shared by the service worker (src/sw/sw.ts) and the in-page
-// Apollo link fallback (./link.ts). They detect GraphQL operations that read
-// or write the free-form UI configuration (`configuration.ui`,
-// `configureUI`, `configureUISetting`), apply the server's write semantics
-// locally and rewrite responses.
+// Pure helpers for the UI config Apollo link (./link.ts). They detect GraphQL
+// operations that read or write the free-form UI configuration
+// (`configuration.ui`, `configureUI`, `configureUISetting`), apply the
+// server's write semantics locally and rewrite responses.
 //
-// This module must stay free of DOM, React and Apollo dependencies: it is
-// bundled into the service worker.
+// This module stays free of DOM, React and Apollo dependencies so that it can
+// be tested on its own.
 
 import {
   ArgumentNode,

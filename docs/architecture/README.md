@@ -12,7 +12,7 @@ Base commit: upstream `4de2351` (branch `microservices`).
 
 ```
  Browser ──HTTP(S)──► gateway (nginx)
-                        │  ├─ /            UI static build (+ service worker)
+                        │  ├─ /            UI static build
                         │  ├─ /graphql     → api   (websocket upgrade)
                         │  ├─ /scene/... /image/... → api
                         │  │       api answers media requests with
@@ -133,7 +133,7 @@ The single `config.yml` is split by consumer:
 |---|---|---|
 | System (container paths, database, fsd address and secret) | environment / compose `.env` (`STASH_*`) | containers at start |
 | Settings (general, interface, scraping, dlna, defaults, stash-boxes, library paths, plugin settings, package sources) | `config.yml` in the `config` volume, held in memory (koanf) — reads never touch the disk | GraphQL `configuration`, plugins, scheduler |
-| UI config (`configuration.ui`, incl. tagger `fingerprintQueue`) | browser IndexedDB via service worker (Apollo-link fallback without a secure context) | browser only; pushed to the server only via **Settings → Tools → Troubleshooting → Sync UI configuration to server** |
+| UI config (`configuration.ui`, incl. tagger `fingerprintQueue`) | browser IndexedDB via an Apollo link in the app's client | browser only; pushed to the server only via **Settings → Tools → Troubleshooting → Sync UI configuration to server** |
 | Windows service | `stash-fsd.toml` on Windows | stash-fsd |
 
 All container paths in the settings are Unix paths (`python_path:
@@ -182,7 +182,7 @@ docs/architecture/       this document and per-component notes
 | P3 | ffmpeg on Windows (probe, screenshots, previews, sprites, phash, markers), direct streaming via gateway | done (no live transcoding in v1) |
 | P4 | Lane scheduler, async hooks with `sync:` opt-in | done; durable worker deferred with P1 |
 | P5 | Read-query cache, config split | done (in process); Valkey deferred with P1 |
-| P6 | UI: IndexedDB + service worker for UI config, troubleshooting sync button | done |
+| P6 | UI: UI config in IndexedDB (Apollo link; the service worker was removed 2026-10-24), troubleshooting sync button | done |
 | P7 | Path conversion of an existing database (`cmd/stash-pathfix`) | done |
 | P8 | Rename on update built in, replacing the renamerOnUpdate plugin ([renamer.md](renamer.md)) | done; golden-tested against the plugin |
 | — | DLNA served from Windows | open |

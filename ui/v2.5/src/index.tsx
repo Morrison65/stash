@@ -5,10 +5,7 @@ import { App } from "./App";
 import { getClient } from "./core/StashService";
 import { baseURL, getPlatformURL } from "./core/createClient";
 import "./index.scss";
-import {
-  registerServiceWorker,
-  startUIConfigSync,
-} from "./core/uiConfig/client";
+import { removeServiceWorker, startUIConfigSync } from "./core/uiConfig/client";
 
 ReactDOM.render(
   <>
@@ -30,7 +27,8 @@ const script = document.createElement("script");
 script.src = getPlatformURL("javascript").toString();
 document.body.appendChild(script);
 
-// The service worker keeps the UI configuration in IndexedDB; see
-// docs/architecture/ui-config.md.
-registerServiceWorker();
+// The UI configuration is kept in IndexedDB by an Apollo link (see
+// docs/architecture/ui-config.md); the service worker that did it before is
+// removed.
+removeServiceWorker();
 startUIConfigSync(getClient());

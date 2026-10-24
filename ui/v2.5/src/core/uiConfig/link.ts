@@ -1,9 +1,7 @@
-// In-page fallback for the UI config service worker: an Apollo link with the
-// same behaviour (see src/sw/sw.ts), active only while no service worker
-// controls the page - e.g. over plain http on a LAN address, where service
-// workers are unavailable (no secure context), or before the first
-// service worker activation. Raw `fetch('/graphql')` calls by plugins are
-// not covered by this fallback.
+// Keeps configuration.ui in IndexedDB: an Apollo link in the app's client
+// that answers the UI config operations locally (see
+// docs/architecture/ui-config.md). Raw `fetch('/graphql')` calls by plugins
+// are not covered and reach the server's copy.
 
 import {
   ApolloLink,
@@ -27,14 +25,6 @@ import {
 
 /** Identifies this tab in broadcasts sent by the in-page fallback. */
 export const tabId = `tab-${Math.random().toString(36).slice(2)}`;
-
-export function isServiceWorkerControlling() {
-  return (
-    typeof navigator !== "undefined" &&
-    !!navigator.serviceWorker &&
-    !!navigator.serviceWorker.controller
-  );
-}
 
 export function isIndexedDBAvailable() {
   try {
@@ -80,11 +70,7 @@ export function createUIConfigLink(options: { graphqlURL: string }) {
   });
 
   return new ApolloLink((operation, forward) => {
-    if (
-      isServiceWorkerControlling() ||
-      !isIndexedDBAvailable() ||
-      hasBypassHeader(operation)
-    ) {
+    if (!isIndexedDBAvailable() || hasBypassHeader(operation)) {
       return forward(operation);
     }
 
