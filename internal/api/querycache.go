@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"os"
 	"regexp"
 	"strconv"
 	"sync"
@@ -23,32 +24,51 @@ import (
 // Plugins and UI components frequently send the same query several times in
 // a row (configuration, findScene, ...). Identical concurrent queries are
 // coalesced into one execution, and results are reused until the data
-// generation changes (txn.Generation, bumped after every committed write and
-// on configuration/plugin/job changes) or the TTL expires. Because the
-// generation is captured before execution, a write that commits while a
-// query runs makes its result unusable: stale data is never served.
+// generation changes (txn.Generation, bumped after every committed write of a
+// request and on configuration/plugin/job changes) or the TTL expires. Because
+// the generation is captured before execution, a write that commits while a
+// query runs makes its result unusable: clients always read their own writes.
+//
+// Writes of background jobs (txn.BackgroundGeneration) are treated
+// differently: a job like auto-tag commits hundreds of times per second, which
+// would make every page load recompute the large list queries. A result that
+// is only behind on background writes is served for up to `staleness` after
+// its computation started, while one background refresh computes a new one.
+// So pages stay fast while jobs run and show data at most `staleness` old;
+// when the job finishes the generation is bumped and everything is fresh.
 //
 // Root fields whose results depend on something other than the database
 // (external scrapers, jobs, logs, the file system, randomness) are never
 // cached.
 type queryCache struct {
 	ttl        time.Duration
+	staleness  time.Duration
 	maxEntries int
 	maxBytes   int
 
-	mu      sync.Mutex
-	entries map[string]*list.Element
-	lru     *list.List
+	mu         sync.Mutex
+	entries    map[string]*list.Element
+	lru        *list.List
+	refreshing map[string]bool
 
 	flight singleflight.Group
 }
 
 type queryCacheEntry struct {
-	key        string
-	generation uint64
-	expires    time.Time
-	resp       *graphql.Response
+	key          string
+	generation   uint64
+	bgGeneration uint64
+	// computed is when the computation of resp started: resp reflects all
+	// writes committed before this time
+	computed time.Time
+	expires  time.Time
+	resp     *graphql.Response
 }
+
+// envBackgroundStaleness overrides the staleness bound (seconds, 0 = off).
+const envBackgroundStaleness = "STASH_CACHE_BACKGROUND_STALENESS"
+
+const defaultBackgroundStaleness = 30 * time.Second
 
 // uncacheableRootFields lists query root fields that must always execute.
 var uncacheableRootFields = map[string]bool{
@@ -85,12 +105,21 @@ var uncacheableRootFields = map[string]bool{
 }
 
 func newQueryCache() *queryCache {
+	staleness := defaultBackgroundStaleness
+	if v := os.Getenv(envBackgroundStaleness); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
+			staleness = time.Duration(secs) * time.Second
+		}
+	}
+
 	return &queryCache{
 		ttl:        time.Minute,
+		staleness:  staleness,
 		maxEntries: 2000,
 		maxBytes:   4 << 20,
 		entries:    make(map[string]*list.Element),
 		lru:        list.New(),
+		refreshing: make(map[string]bool),
 	}
 }
 
@@ -118,19 +147,19 @@ func (c *queryCache) InterceptResponse(ctx context.Context, next graphql.Respons
 		return next(ctx)
 	}
 
-	gen := txn.Generation()
-	if resp := c.get(key, gen); resp != nil {
+	gen, bg := txn.Generation(), txn.BackgroundGeneration()
+	if resp, stale := c.get(key, gen, bg); resp != nil {
+		if stale {
+			c.refresh(ctx, key, next)
+		}
 		return resp
 	}
 
 	produced := false
-	v, _, _ := c.flight.Do(key+"@"+strconv.FormatUint(gen, 10), func() (any, error) {
+	flightKey := key + "@" + strconv.FormatUint(gen, 10) + "/" + strconv.FormatUint(bg, 10)
+	v, _, _ := c.flight.Do(flightKey, func() (any, error) {
 		produced = true
-		resp := next(ctx)
-		if resp != nil && len(resp.Errors) == 0 && len(resp.Data) <= c.maxBytes {
-			c.put(key, gen, resp)
-		}
-		return resp, nil
+		return c.execute(ctx, key, next), nil
 	})
 
 	resp, _ := v.(*graphql.Response)
@@ -142,6 +171,40 @@ func (c *queryCache) InterceptResponse(ctx context.Context, next graphql.Respons
 	}
 
 	return cloneResponse(resp)
+}
+
+// execute runs the query and stores a cacheable result.
+func (c *queryCache) execute(ctx context.Context, key string, next graphql.ResponseHandler) *graphql.Response {
+	gen, bg, started := txn.Generation(), txn.BackgroundGeneration(), time.Now()
+	resp := next(ctx)
+	if resp != nil && len(resp.Errors) == 0 && len(resp.Data) <= c.maxBytes {
+		c.put(key, gen, bg, started, resp)
+	}
+	return resp
+}
+
+// refresh recomputes a stale entry in the background, at most once per key at
+// a time. The request that triggered it has already been answered, so the
+// query runs with its values but without its cancellation.
+func (c *queryCache) refresh(ctx context.Context, key string, next graphql.ResponseHandler) {
+	c.mu.Lock()
+	if c.refreshing[key] {
+		c.mu.Unlock()
+		return
+	}
+	c.refreshing[key] = true
+	c.mu.Unlock()
+
+	go func() {
+		defer func() {
+			c.mu.Lock()
+			delete(c.refreshing, key)
+			c.mu.Unlock()
+		}()
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer cancel()
+		c.execute(rctx, key, next)
+	}()
 }
 
 func cacheableOperation(oc *graphql.OperationContext) bool {
@@ -218,36 +281,55 @@ func cacheKey(ctx context.Context, oc *graphql.OperationContext) (string, bool) 
 	return hex.EncodeToString(h.Sum(nil)), true
 }
 
-func (c *queryCache) get(key string, gen uint64) *graphql.Response {
+// get returns a cached response. stale is true when the response is only
+// behind on background writes and still within the staleness bound; the
+// caller should trigger a refresh.
+func (c *queryCache) get(key string, gen, bg uint64) (resp *graphql.Response, stale bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	el, ok := c.entries[key]
 	if !ok {
-		return nil
+		return nil, false
 	}
 
 	e := el.Value.(*queryCacheEntry)
-	if e.generation != gen || time.Now().After(e.expires) {
+	now := time.Now()
+	if e.generation != gen || now.After(e.expires) {
 		c.lru.Remove(el)
 		delete(c.entries, key)
-		return nil
+		return nil, false
+	}
+
+	if e.bgGeneration != bg {
+		if c.staleness <= 0 || now.Sub(e.computed) > c.staleness {
+			c.lru.Remove(el)
+			delete(c.entries, key)
+			return nil, false
+		}
+		stale = true
 	}
 
 	c.lru.MoveToFront(el)
-	return cloneResponse(e.resp)
+	return cloneResponse(e.resp), stale
 }
 
-func (c *queryCache) put(key string, gen uint64, resp *graphql.Response) {
+func (c *queryCache) put(key string, gen, bg uint64, computed time.Time, resp *graphql.Response) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// a write committed while the query executed: the result may be stale
+	// a client write committed while the query executed: the result may not
+	// contain it, so it must not be served
 	if gen != txn.Generation() {
 		return
 	}
 
-	e := &queryCacheEntry{key: key, generation: gen, expires: time.Now().Add(c.ttl), resp: cloneResponse(resp)}
+	// never replace a newer result with an older one (refresh races)
+	if el, ok := c.entries[key]; ok && el.Value.(*queryCacheEntry).computed.After(computed) {
+		return
+	}
+
+	e := &queryCacheEntry{key: key, generation: gen, bgGeneration: bg, computed: computed, expires: time.Now().Add(c.ttl), resp: cloneResponse(resp)}
 	if el, ok := c.entries[key]; ok {
 		el.Value = e
 		c.lru.MoveToFront(el)

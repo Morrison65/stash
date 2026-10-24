@@ -12,7 +12,6 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/remeh/sizedwaitgroup"
 	"github.com/stashapp/stash/internal/dlna"
 	"github.com/stashapp/stash/internal/log"
 	"github.com/stashapp/stash/internal/manager/config"
@@ -37,9 +36,9 @@ type Manager struct {
 	Config *config.Config
 	Logger *log.Logger
 
-	// ImageThumbnailGenerateWaitGroup is the global wait group image thumbnail generation
-	// It uses the parallel tasks setting from the configuration.
-	ImageThumbnailGenerateWaitGroup sizedwaitgroup.SizedWaitGroup
+	// ImageThumbnailLimiter bounds concurrent on-the-fly image thumbnail
+	// generation. It uses the parallel tasks setting from the configuration.
+	ImageThumbnailLimiter *Limiter
 
 	Paths *paths.Paths
 
@@ -122,7 +121,7 @@ func (s *Manager) RefreshConfig() {
 			logger.Warnf("could not create interactive heatmaps directory: %v", err)
 		}
 
-		s.ImageThumbnailGenerateWaitGroup.Size = cfg.GetParallelTasksWithAutoDetection()
+		s.ImageThumbnailLimiter.Resize(cfg.GetParallelTasksWithAutoDetection())
 	}
 }
 

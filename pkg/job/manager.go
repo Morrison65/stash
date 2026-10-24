@@ -206,8 +206,9 @@ func (m *Manager) dispatch(ctx context.Context, j *Job) {
 	j.StartTime = &t
 	j.Status = StatusRunning
 
-	// create a cancellable context for the job that is not canceled by the outer context
-	ctx, cancelFunc := context.WithCancel(context.WithoutCancel(ctx))
+	// create a cancellable context for the job that is not canceled by the outer context;
+	// its writes count as background writes for API caches (see txn.WithBackground)
+	ctx, cancelFunc := context.WithCancel(txn.WithBackground(context.WithoutCancel(ctx)))
 	j.cancelFunc = cancelFunc
 
 	go m.executeJob(ctx, j)

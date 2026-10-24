@@ -73,10 +73,9 @@ func (rs imageRoutes) serveThumbnail(w http.ResponseWriter, r *http.Request, img
 			return
 		}
 
-		// use the image thumbnail generate wait group to limit the number of concurrent thumbnail generation tasks
-		wg := &mgr.ImageThumbnailGenerateWaitGroup
-		wg.Add()
-		defer wg.Done()
+		// limit the number of concurrent thumbnail generation tasks
+		release := mgr.ImageThumbnailLimiter.Acquire()
+		defer release()
 
 		clipPreviewOptions := image.ClipPreviewOptions{
 			InputArgs:  manager.GetInstance().Config.GetTranscodeInputArgs(),

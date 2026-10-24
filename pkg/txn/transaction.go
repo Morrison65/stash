@@ -80,7 +80,7 @@ func withTxn(ctx context.Context, m Manager, fn TxnFunc, writable bool, execComp
 			err = commit(txnCtx, m)
 
 			if writable && err == nil {
-				BumpGeneration()
+				bumpAfterCommit(ctx)
 			}
 
 			// execute post-hooks with outside context

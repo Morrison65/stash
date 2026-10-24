@@ -203,3 +203,83 @@ func TestQueryCacheRetriesWhenSharedExecutionFailed(t *testing.T) {
 		t.Errorf("a waiter must not inherit another request's failure: %+v", second)
 	}
 }
+
+func TestQueryCacheServesDuringBackgroundWrites(t *testing.T) {
+	c := newQueryCache()
+	c.staleness = time.Minute
+
+	var calls atomic.Int32
+	slowRefresh := make(chan struct{})
+	next := func(ctx context.Context) *graphql.Response {
+		n := calls.Add(1)
+		if n > 1 {
+			<-slowRefresh
+		}
+		return &graphql.Response{Data: json.RawMessage(`{"v":` + string(rune('0'+n)) + `}`)}
+	}
+	ctx := opCtx(ast.Query, "findScenes", nil)
+
+	c.InterceptResponse(ctx, next) // v=1 cached
+
+	// a background job writes: the cached answer is still served at once
+	txn.BumpBackgroundGeneration()
+	start := time.Now()
+	resp := c.InterceptResponse(ctx, next)
+	if time.Since(start) > 50*time.Millisecond {
+		t.Fatalf("stale hit waited for the refresh")
+	}
+	if string(resp.Data) != `{"v":1}` {
+		t.Errorf("want the cached answer, got %s", resp.Data)
+	}
+
+	// exactly one background refresh runs, even with more requests
+	c.InterceptResponse(ctx, next)
+	time.Sleep(20 * time.Millisecond)
+	if calls.Load() != 2 {
+		t.Errorf("want one background refresh, handler called %d times", calls.Load())
+	}
+
+	// once the refresh finished, its result is served
+	close(slowRefresh)
+	time.Sleep(50 * time.Millisecond)
+	if resp := c.InterceptResponse(ctx, next); string(resp.Data) != `{"v":2}` {
+		t.Errorf("want the refreshed answer, got %s", resp.Data)
+	}
+}
+
+func TestQueryCacheBackgroundStalenessBound(t *testing.T) {
+	c := newQueryCache()
+	c.staleness = 30 * time.Millisecond
+
+	var calls atomic.Int32
+	next := countingHandler(&calls, 0)
+	ctx := opCtx(ast.Query, "findImages", nil)
+
+	c.InterceptResponse(ctx, next)
+	time.Sleep(50 * time.Millisecond)
+	txn.BumpBackgroundGeneration()
+
+	// older than the bound: computed again before answering
+	c.InterceptResponse(ctx, next)
+	if calls.Load() != 2 {
+		t.Errorf("an entry older than the staleness bound must be recomputed, got %d calls", calls.Load())
+	}
+}
+
+func TestQueryCacheClientWriteBeatsStaleness(t *testing.T) {
+	c := newQueryCache()
+	c.staleness = time.Minute
+
+	var calls atomic.Int32
+	next := countingHandler(&calls, 0)
+	ctx := opCtx(ast.Query, "findPerformers", nil)
+
+	c.InterceptResponse(ctx, next)
+	txn.BumpBackgroundGeneration()
+	txn.BumpGeneration() // e.g. the user saved a performer
+
+	c.InterceptResponse(ctx, next)
+	if calls.Load() != 2 {
+		t.Errorf("a client write must invalidate even within the staleness bound")
+	}
+}
