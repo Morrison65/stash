@@ -44,7 +44,8 @@ and only stash-fsd can move files.
 
 A file that was moved but not recorded (API stopped in between) is found on
 the next update of its scene: the source is missing and the target exists,
-so only the database is updated.
+so only the database is updated. (This assumes the file at the target is the moved one; a file
+put there by hand and not yet scanned would be taken for it.)
 
 stash-fsd's `Rename` copies only when the rename fails because the target is
 on another volume. The copy is written to `<target>.partial` and renamed into
