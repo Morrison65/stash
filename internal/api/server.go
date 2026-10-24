@@ -190,6 +190,8 @@ func Initialize() (*Server, error) {
 
 	gqlSrv.SetQueryCache(gqlLru.New[*ast.QueryDocument](1000))
 	gqlSrv.Use(gqlExtension.Introspection{})
+	// coalesce and cache identical read-only queries (see querycache.go)
+	gqlSrv.Use(newQueryCache())
 
 	gqlSrv.SetErrorPresenter(gqlErrorHandler)
 

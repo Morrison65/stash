@@ -166,6 +166,8 @@ func NewCache(globalConfig GlobalConfig, repo Repository) *Cache {
 // ReloadScrapers clears the scraper cache and reloads from the scraper path.
 // If a scraper cannot be loaded, an error is logged and the scraper is skipped.
 func (c *Cache) ReloadScrapers() {
+	defer txn.BumpGeneration()
+
 	path := c.globalConfig.GetScrapersPath()
 	scrapers := make(map[string]scraper)
 

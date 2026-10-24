@@ -139,6 +139,8 @@ func (c *Cache) RegisterSessionStore(sessionStore *session.Store) {
 // ReloadPlugins clears the plugin cache and loads from the plugin path.
 // If a plugin cannot be loaded, an error is logged and the plugin is skipped.
 func (c *Cache) ReloadPlugins() {
+	defer txn.BumpGeneration()
+
 	path := c.config.GetPluginsPath()
 	// # 4484 - ensure plugin ids are unique
 	plugins := make([]Config, 0)

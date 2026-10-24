@@ -27,6 +27,7 @@ import (
 	"github.com/stashapp/stash/pkg/models"
 	"github.com/stashapp/stash/pkg/models/paths"
 	"github.com/stashapp/stash/pkg/sliceutil"
+	"github.com/stashapp/stash/pkg/txn"
 	"github.com/stashapp/stash/pkg/utils"
 )
 
@@ -449,6 +450,9 @@ func (i *Config) SetInterface(key string, value interface{}) {
 
 func (i *Config) set(key string, value interface{}) {
 	// assumes lock held
+
+	// the configuration query result changes
+	txn.BumpGeneration()
 
 	// default behaviour for Set is to merge the value
 	// we want to replace it

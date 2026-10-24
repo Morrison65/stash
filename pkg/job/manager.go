@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stashapp/stash/pkg/logger"
+	"github.com/stashapp/stash/pkg/txn"
 )
 
 const maxGraveyardSize = 10
@@ -223,6 +224,9 @@ func (m *Manager) onJobFinish(job *Job) {
 	}
 	t := time.Now()
 	job.EndTime = &t
+
+	// jobs create files (previews, transcodes, ...) that API results reflect
+	txn.BumpGeneration()
 }
 
 func (m *Manager) removeJob(job *Job) {
