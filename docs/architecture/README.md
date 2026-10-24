@@ -120,7 +120,7 @@ The single `config.yml` is split by consumer:
 | System (paths, DB, cache, fsd address, secrets) | environment / compose `.env` | containers at start |
 | Settings (general, interface, scraping, dlna, defaults, stash-boxes, library paths) | PostgreSQL `settings`, cached in-process + Valkey, invalidated via pub/sub | GraphQL `configuration`, plugins, all services |
 | Plugin registry (installed/enabled plugins, package sources, per-plugin settings) | PostgreSQL | scheduler + api; plugins only see their own settings through GraphQL as before |
-| UI config (`configuration.ui`, incl. tagger `fingerprintQueue`) | browser IndexedDB via service worker | browser only; pushed to the server only via **Settings → Troubleshooting → Sync UI config to server** |
+| UI config (`configuration.ui`, incl. tagger `fingerprintQueue`) | browser IndexedDB via service worker | browser only; pushed to the server only via **Settings → Tools → Troubleshooting → Sync UI configuration to server** |
 | Windows service | `stash-fsd.toml` on Windows | stash-fsd |
 
 ### Caching
