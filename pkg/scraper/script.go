@@ -287,8 +287,10 @@ func (s *scriptScraper) runScraperScript(ctx context.Context, command []string, 
 			return fmt.Errorf("could not unmarshal json from script output: %w", lenientErr)
 		}
 
-		// Lenient decode succeeded, print a warning, but use the decode
-		logger.Warnf("reading script result: %v", strictErr)
+		// Lenient decode succeeded: use it. Newer scrapers send fields this
+		// Stash version does not know (e.g. production_date); that is only of
+		// interest to scraper authors, not a problem with the scrape.
+		logger.Debugf("reading script result: %v", strictErr)
 	}
 
 	err = cmd.Wait()
