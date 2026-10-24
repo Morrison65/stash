@@ -101,6 +101,7 @@ func (s *Manager) SetBlobStoreOptions() {
 func (s *Manager) RefreshConfig() {
 	cfg := s.Config
 	*s.Paths = paths.NewPaths(cfg.GetGeneratedPath(), cfg.GetBlobsPath())
+	initGeneratedAccel(cfg.GetGeneratedPath())
 	if cfg.Validate() == nil {
 		if err := fsutil.EnsureDir(s.Paths.Generated.Screenshots); err != nil {
 			logger.Warnf("could not create screenshots directory: %v", err)

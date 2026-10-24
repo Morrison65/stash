@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"github.com/stashapp/stash/pkg/file"
 	"github.com/stashapp/stash/pkg/logger"
 	"github.com/stashapp/stash/pkg/remotefs"
+	"github.com/stashapp/stash/pkg/utils"
 )
 
 // Environment variables configuring the connection to stash-fsd, the
@@ -200,4 +202,49 @@ func (r *fsdRunner) FetchWorkspaceFile(ctx context.Context, workspace, name stri
 
 func (r *fsdRunner) DeleteWorkspace(ctx context.Context, workspace string) error {
 	return r.c.DeleteWorkspace(ctx, workspace)
+}
+
+// envGeneratedAccelPrefix is the path prefix of the gateway's internal
+// location that serves the generated volume (e.g. "/_generated"). When set,
+// generated files (previews, sprites, screenshots, VTTs) are served by nginx.
+const envGeneratedAccelPrefix = "STASH_GENERATED_ACCEL_PREFIX"
+
+// initGeneratedAccel lets the gateway serve files from the generated
+// directory directly. generatedPath is the directory as the API sees it; the
+// gateway mounts the same volume.
+func initGeneratedAccel(generatedPath string) {
+	prefix := strings.TrimSuffix(os.Getenv(envGeneratedAccelPrefix), "/")
+	if prefix == "" || generatedPath == "" {
+		utils.StaticFileAccel = nil
+		return
+	}
+
+	root := filepath.Clean(generatedPath)
+	utils.StaticFileAccel = func(w http.ResponseWriter, r *http.Request, p string) bool {
+		rel, err := filepath.Rel(root, filepath.Clean(p))
+		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+			return false
+		}
+
+		if ct := generatedContentType(p); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		}
+
+		u := url.URL{Path: prefix + "/" + filepath.ToSlash(rel)}
+		w.Header().Set("X-Accel-Redirect", u.EscapedPath())
+		w.WriteHeader(http.StatusOK)
+		return true
+	}
+	logger.Infof("Generated files are served by the gateway via %s", prefix)
+}
+
+func generatedContentType(p string) string {
+	switch strings.ToLower(filepath.Ext(p)) {
+	case ".vtt":
+		return "text/vtt; charset=utf-8"
+	case ".webp":
+		return "image/webp"
+	default:
+		return mime.TypeByExtension(filepath.Ext(p))
+	}
 }

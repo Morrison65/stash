@@ -35,10 +35,19 @@ func ServeStaticContent(w http.ResponseWriter, r *http.Request, data []byte) {
 	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(data))
 }
 
+// StaticFileAccel, when set, may hand a static file over to the reverse
+// proxy (X-Accel-Redirect) instead of serving it from this process. It
+// returns false if it did not handle the request.
+var StaticFileAccel func(w http.ResponseWriter, r *http.Request, path string) bool
+
 // Serves static content at filepath, adding Cache-Control: no-cache.
 // Responds to conditional requests using the file modtime.
 func ServeStaticFile(w http.ResponseWriter, r *http.Request, filepath string) {
 	setStaticContentCacheControl(w, r)
+
+	if StaticFileAccel != nil && StaticFileAccel(w, r, filepath) {
+		return
+	}
 
 	http.ServeFile(w, r, filepath)
 }

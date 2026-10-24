@@ -72,6 +72,15 @@ server {
         proxy_send_timeout 1h;
     }
 
+    # Generated files (previews, sprites, screenshots, VTTs) from the shared
+    # volume, after the API has authorised the request (X-Accel-Redirect).
+    location /_generated/ {
+        internal;
+        alias /generated/;
+        sendfile on;
+        tcp_nopush on;
+    }
+
     # Everything else (index.html with auth redirects, login, media routes,
     # plugin assets, custom css/js) is handled by the API.
     location / {
