@@ -5,7 +5,10 @@ import { App } from "./App";
 import { getClient } from "./core/StashService";
 import { baseURL, getPlatformURL } from "./core/createClient";
 import "./index.scss";
-import * as serviceWorker from "./serviceWorker";
+import {
+  registerServiceWorker,
+  startUIConfigSync,
+} from "./core/uiConfig/client";
 
 ReactDOM.render(
   <>
@@ -27,7 +30,7 @@ const script = document.createElement("script");
 script.src = getPlatformURL("javascript").toString();
 document.body.appendChild(script);
 
-// If you want your app to work offline and load faster, you can change
-// unregister() to register() below. Note this comes with some pitfalls.
-// Learn more about service workers: http://bit.ly/CRA-PWA
-serviceWorker.unregister();
+// The service worker keeps the UI configuration in IndexedDB; see
+// docs/architecture/ui-config.md.
+registerServiceWorker();
+startUIConfigSync(getClient());

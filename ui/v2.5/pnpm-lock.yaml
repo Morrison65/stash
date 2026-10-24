@@ -300,6 +300,9 @@ importers:
       extract-react-intl-messages:
         specifier: ^4.1.1
         version: 4.1.1
+      fake-indexeddb:
+        specifier: ^6.2.6
+        version: 6.2.6
       postcss:
         specifier: ^8.4.31
         version: 8.5.6
@@ -3054,6 +3057,10 @@ packages:
     resolution: {integrity: sha512-dPogci5X7HVtV7VbUxajH/1YgfNRaW2VtEiVidZ/31Tq8314uzOtzVMNo0IrAPD2E+H1wHoPiu/j565TZsyIZg==}
     engines: {node: '>=10'}
     hasBin: true
+
+  fake-indexeddb@6.2.6:
+    resolution: {integrity: sha512-ihhmr0KoET51jT8R4YhbUYuLLvr1qqO6INISygtN16i8loR8kAxtAUr4+EKHTSMjL+lggaAn4OC7DRqzrNgnuQ==}
+    engines: {node: '>=18'}
 
   fast-deep-equal@2.0.1:
     resolution: {integrity: sha512-bCK/2Z4zLidyB4ReuIsvALH6w31YfAQDmXMqMx6FyfHqvBxtjC0eRumeSu4Bs3XtXwpyIywtSTrVT99BxY1f9w==}
@@ -8906,6 +8913,8 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
       - ts-jest
+
+  fake-indexeddb@6.2.6: {}
 
   fast-deep-equal@2.0.1: {}
 
