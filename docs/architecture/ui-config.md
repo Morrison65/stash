@@ -102,6 +102,8 @@ has two buttons:
 - **Server-side readers** of the UI config see only the last synced copy.
   For example, `config.GetMinimumPlayPercent()` reads
   `ui.minimumPlayPercent` on the server.
+- **Mixed mutations:** the local UI write happens before the request is
+  forwarded, so it is kept even if the server rejects the request.
 - **Dev server:** the Vite dev server (`pnpm start`) does not register the
   service worker, because it talks to the GraphQL server cross-origin. Only
   the in-page fallback is active there.
