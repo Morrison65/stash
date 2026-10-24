@@ -43,11 +43,17 @@ Base commit: upstream `4de2351` (branch `microservices`).
 
 ### Paths
 * Library paths (video, image, gallery files and their folders) are **Windows
-  paths written with forward slashes**: `U:/Media/clip.mp4`,
-  `//nas/share/clip.mp4`. Windows accepts this form natively and Go's
-  `path/filepath` on Linux splits it correctly (`Dir`, `Base`, `Join`), so the
-  scanner and business logic need no special path library. `stash-fsd`
-  converts to/from native `\` form at its boundary.
+  paths written with forward slashes**: `U:/Media/clip.mp4`. Go's
+  `path/filepath` on Linux treats `U:` as an ordinary first path element, so
+  `Dir`, `Base`, `Join`, `Rel` and `Clean` all work and the scanner and
+  business logic need no special path library. `stash-fsd` converts to/from
+  native `\` form at its boundary.
+* Drive roots are written `U:` (that is what `filepath.Clean("U:/")` yields).
+* UNC paths use the pseudo drive **`UNC:`**: `\\nas\share\clip.mp4` is
+  stored as `UNC:/nas/share/clip.mp4`. A leading `//` cannot be used because
+  `filepath.Clean`/`Join` on Linux collapse it to `/`. Input in any form
+  (`\\nas\share`, `//nas/share`, `unc:/nas/share`) is normalised by
+  `file.NormalizeLibraryPath`.
 * Everything else in the configuration is a **Unix path inside the
   containers** (`python_path: /usr/local/bin/python`, `generated: /generated`,
   `plugins_path: /config/plugins`, ...).

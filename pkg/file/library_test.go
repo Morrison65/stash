@@ -14,6 +14,9 @@ func TestIsWindowsPath(t *testing.T) {
 		`U:\Media\a.mp4`:   true,
 		"u:/":              true,
 		"U:":               true,
+		"UNC:/nas/share/x": true,
+		"unc:/nas":         true,
+		"UNCX/x":           false,
 		"//nas/share/x":    true,
 		`\\nas\share\x`:    true,
 		"/generated/x.jpg": false,
@@ -31,9 +34,11 @@ func TestNormalizeLibraryPath(t *testing.T) {
 	for in, want := range map[string]string{
 		`u:\Media\Clips\`:           "U:/Media/Clips",
 		"U:/Media/./x/../Clips":     "U:/Media/Clips",
-		"u:":                        "U:/",
-		`U:\`:                       "U:/",
-		`\\LIL_NAS_X\Pool\StashLib`: "//LIL_NAS_X/Pool/StashLib",
+		"u:":                        "U:",
+		`U:\`:                       "U:",
+		`\\LIL_NAS_X\Pool\StashLib`: "UNC:/LIL_NAS_X/Pool/StashLib",
+		"//nas/share/x/":            "UNC:/nas/share/x",
+		"unc:/nas/share":            "UNC:/nas/share",
 		"/data/clips/":              "/data/clips",
 	} {
 		if got := NormalizeLibraryPath(in); got != want {
@@ -63,9 +68,10 @@ func TestRoutingFS(t *testing.T) {
 
 	_, _ = r.Stat("U:/Media/a.mp4")
 	_, _ = r.Stat("/generated/a.jpg")
+	_, _ = r.Stat("UNC:/nas/share/a.mp4")
 
-	want := []string{"remote:U:/Media/a.mp4", "local:/generated/a.jpg"}
-	if len(calls) != 2 || calls[0] != want[0] || calls[1] != want[1] {
+	want := []string{"remote:U:/Media/a.mp4", "local:/generated/a.jpg", "remote:UNC:/nas/share/a.mp4"}
+	if len(calls) != 3 || calls[0] != want[0] || calls[1] != want[1] || calls[2] != want[2] {
 		t.Errorf("calls = %v, want %v", calls, want)
 	}
 

@@ -71,18 +71,27 @@ func SetLibrary(l LibraryFS) {
 	library = l
 }
 
-// IsWindowsPath reports whether p is an absolute Windows path in either
-// slash form ("U:/x", "U:\x", "//server/share", `\\server\share`). In the
-// container deployment these are exactly the media library paths; container
-// paths (generated, cache, blobs, metadata) are Unix paths.
+// UNCPrefix is the canonical prefix for UNC paths: `\\server\share\x` is
+// written as "UNC:/server/share/x". A leading "//" would be collapsed to "/"
+// by path/filepath on Linux (Clean, Join), while a pseudo drive survives
+// every filepath operation just like "U:/x".
+const UNCPrefix = "UNC:/"
+
+// IsWindowsPath reports whether p is an absolute Windows path: a drive path
+// ("U:/x", `U:\x`, "U:"), a canonical UNC path ("UNC:/server/share") or a raw
+// UNC path ("//server/share", `\\server\share`). In the container deployment
+// these are exactly the media library paths; container paths (generated,
+// cache, blobs, metadata) are Unix paths.
 func IsWindowsPath(p string) bool {
-	if len(p) >= 3 && p[1] == ':' && (p[2] == '/' || p[2] == '\\') {
-		c := p[0] | 0x20
-		return c >= 'a' && c <= 'z'
+	if len(p) >= 4 && strings.EqualFold(p[:4], "UNC:") {
+		return len(p) == 4 || p[4] == '/' || p[4] == '\\'
 	}
-	if len(p) == 2 && p[1] == ':' {
+	if len(p) >= 2 && p[1] == ':' {
 		c := p[0] | 0x20
-		return c >= 'a' && c <= 'z'
+		if c < 'a' || c > 'z' {
+			return false
+		}
+		return len(p) == 2 || p[2] == '/' || p[2] == '\\'
 	}
 	return len(p) >= 2 && (p[:2] == "//" || p[:2] == `\\`)
 }
@@ -183,30 +192,29 @@ func (f *OsFS) MoveToTrash(path string, trashDir string) (string, error) {
 
 var _ LibraryFS = (*OsFS)(nil)
 
-// NormalizeLibraryPath converts a Windows library path to the canonical
-// forward-slash form with an upper-case drive letter ("u:\Media\" ->
-// "U:/Media"). Other paths are only cleaned.
+// NormalizeLibraryPath converts a Windows library path to the canonical form:
+// forward slashes, upper-case drive letter, no trailing slash, drive roots as
+// "U:" (what filepath.Clean produces) and UNC paths as "UNC:/server/share/x".
+// Other paths are only cleaned.
 func NormalizeLibraryPath(p string) string {
 	if !IsWindowsPath(p) {
 		return filepath.Clean(p)
 	}
 
 	p = strings.ReplaceAll(p, `\`, "/")
-	unc := strings.HasPrefix(p, "//")
-	if unc {
-		p = "/" + path.Clean(p[1:])
-	} else {
-		p = strings.ToUpper(p[:1]) + p[1:]
-		if len(p) == 2 {
-			// bare drive: "U:" -> "U:/"
-			return p + "/"
-		}
-		p = path.Clean(p)
-		if len(p) == 2 {
-			p += "/"
-		}
+
+	var rest string
+	switch {
+	case len(p) >= 4 && strings.EqualFold(p[:4], "UNC:"):
+		rest = p[4:]
+	case strings.HasPrefix(p, "//"):
+		rest = p
+	default:
+		// drive path; path.Clean("U:/") is "U:"
+		return strings.ToUpper(p[:1]) + path.Clean(p[1:])
 	}
-	return p
+
+	return UNCPrefix + strings.TrimPrefix(path.Clean("/"+strings.TrimLeft(rest, "/")), "/")
 }
 
 // LibraryFileExists mirrors fsutil.FileExists for the library file system.

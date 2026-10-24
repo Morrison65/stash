@@ -3,7 +3,10 @@
 //
 // Paths
 //   All paths are Windows paths written with forward slashes, e.g.
-//   "U:/Media/clip.mp4" or "//nas/share/clip.mp4". stash-fsd converts to the
+//   "U:/Media/clip.mp4". Drive roots are "U:". UNC paths use the pseudo drive
+//   "UNC:" ("UNC:/nas/share/clip.mp4" = \\nas\share\clip.mp4), because Go's
+//   filepath.Clean on Linux collapses a leading "//". stash-fsd also accepts
+//   "//nas/share" and "\\nas\share" on input. stash-fsd converts to the
 //   native form at its boundary and rejects paths outside its configured
 //   roots with PERMISSION_DENIED.
 //
