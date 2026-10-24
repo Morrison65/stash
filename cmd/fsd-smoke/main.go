@@ -257,10 +257,14 @@ func main() {
 	check(codeOf(err) == codes.PermissionDenied, "remove root -> %v", codeOf(err))
 	trash := smoke + "/.trash"
 	t1, err := fs.MoveToTrash(ctx, &pb.TrashRequest{Path: smoke + "/d", TrashDir: trash})
-	check(err == nil && t1.Path == trash+"/d", "trash -> %v (%v)", t1.GetPath(), err)
+	// returned paths are canonical (upper-case drive), the input may not be
+	check(err == nil && strings.EqualFold(t1.GetPath(), trash+"/d"), "trash -> %v (%v)", t1.GetPath(), err)
 	_, _ = fs.Mkdir(ctx, &pb.MkdirRequest{Path: smoke + "/d"})
 	t2, err := fs.MoveToTrash(ctx, &pb.TrashRequest{Path: smoke + "/d", TrashDir: trash})
-	check(err == nil && strings.HasPrefix(t2.GetPath(), trash+"/d_") && len(t2.GetPath()) == len(trash+"/d_20060102-150405"), "trash collision -> %v (%v)", t2.GetPath(), err)
+	check(err == nil && strings.HasPrefix(strings.ToLower(t2.GetPath()), strings.ToLower(trash+"/d_")) && len(t2.GetPath()) == len(trash+"/d_20060102-150405"), "trash collision -> %v (%v)", t2.GetPath(), err)
+	if len(r) > 1 && r[1] == ':' {
+		check(fi.Path[0] == strings.ToUpper(r[:1])[0], "returned drive letter is upper-case (%s)", fi.Path[:2])
+	}
 
 	fmt.Println("== media")
 	video := r + "/smoke.mp4"
@@ -328,6 +332,19 @@ func main() {
 			TimeoutSeconds: 2,
 		})
 		check(err == nil && st.TimedOut && time.Since(start) < 15*time.Second, "timeout kills ffmpeg after %v (timed_out=%v)", time.Since(start).Round(time.Millisecond), st.GetTimedOut())
+
+		// Cancel a long-running Run that writes no stdout; the server must kill
+		// ffmpeg (check the server log for "client went away; process killed").
+		cctx, ccancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+		start = time.Now()
+		_, _, _, err = runTool(cctx, media, &pb.RunRequest{
+			Tool:           pb.Tool_TOOL_FFMPEG,
+			Args:           []string{"-hide_banner", "-re", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=5", "-f", "null", "-"},
+			TimeoutSeconds: 120,
+		})
+		ccancel()
+		check(codeOf(err) == codes.DeadlineExceeded || codeOf(err) == codes.Canceled, "client cancel after %v -> %v", time.Since(start).Round(time.Millisecond), codeOf(err))
+		time.Sleep(time.Second)
 
 		_, _, _, err = runTool(ctx, media, &pb.RunRequest{Tool: pb.Tool_TOOL_FFMPEG, Args: []string{"-i", "{input:0}"}, Inputs: []string{*outside}})
 		check(codeOf(err) == codes.PermissionDenied, "run with input outside roots -> %v", codeOf(err))

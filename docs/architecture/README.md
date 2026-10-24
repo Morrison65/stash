@@ -43,11 +43,13 @@ Base commit: upstream `4de2351` (branch `microservices`).
 
 ### Paths
 * Library paths (video, image, gallery files and their folders) are **Windows
-  paths written with forward slashes**: `U:/Media/clip.mp4`,
-  `//nas/share/clip.mp4`. Windows accepts this form natively and Go's
-  `path/filepath` on Linux splits it correctly (`Dir`, `Base`, `Join`), so the
-  scanner and business logic need no special path library. `stash-fsd`
-  converts to/from native `\` form at its boundary.
+  paths written with forward slashes**: `U:/Media/clip.mp4`, drive roots as
+  `U:`, and UNC shares through the pseudo drive `UNC:/nas/share/clip.mp4`
+  (a leading `//` would not survive Go's `filepath.Clean` on Linux). Go's
+  `path/filepath` on Linux handles these forms correctly (`Clean`, `Dir`,
+  `Base`, `Join`), so the scanner and business logic need no special path
+  library. `stash-fsd` converts to and from the native `\` form at its
+  boundary; see [stash-fsd.md](stash-fsd.md#paths-on-the-wire).
 * Everything else in the configuration is a **Unix path inside the
   containers** (`python_path: /usr/local/bin/python`, `generated: /generated`,
   `plugins_path: /config/plugins`, ...).

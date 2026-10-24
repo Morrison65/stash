@@ -6,6 +6,31 @@ library. Source: `windows/stash-fsd/`. Build: `scripts/dev/fsd-build.sh`
 (cross-compiled in Docker to `x86_64-pc-windows-gnu`, output in
 `windows/stash-fsd/dist/`).
 
+## Paths on the wire
+
+Library paths are Windows paths written with forward slashes. Every path the
+service returns (`FileInfo.path`, `EvalSymlinks`, `MoveToTrash`, ...) is in
+this canonical form:
+
+| Kind | Canonical wire form | Native |
+|---|---|---|
+| drive path | `U:/Media/clip.mp4` (upper-case letter) | `U:\Media\clip.mp4` |
+| drive root | `U:` | `U:\` |
+| UNC path | `UNC:/nas/share/dir/clip.mp4` | `\\nas\share\dir\clip.mp4` |
+| UNC share root | `UNC:/nas/share` | `\\nas\share` |
+
+`UNC:` is a pseudo drive: Go's `filepath.Clean` on Linux would collapse a
+leading `//` into `/` and break UNC paths, while `UNC:/nas/share/x` survives
+`Clean`/`Join`/`Dir` unchanged. `U:` is what `filepath.Clean("U:/")` yields.
+
+Input is lenient. The service accepts `U:/`, `u:`, backslashes, `unc:` in any
+case, `//nas/share/...` and `\\nas\share\...`. The same forms work for `roots`
+in `stash-fsd.toml` and for the base64url `p` parameter of `/raw`. Paths are
+cleaned lexically. A `..` that climbs above the volume (drive or
+`server/share`), or any path outside the roots, returns `PERMISSION_DENIED`;
+relative paths do too. A path that is rooted but has no drive (`/x`) is not a
+Windows path and returns `INVALID_ARGUMENT`.
+
 ## Interfaces
 
 1. **gRPC** (`grpc_listen`, default `0.0.0.0:7700`) — the contract in
@@ -25,7 +50,7 @@ GET|HEAD /raw?p=<path>&z=<zip entry>&e=<expiry>&s=<signature>
 
 | Param | Meaning |
 |---|---|
-| `p` | forward-slash Windows path, base64url (no padding) encoded |
+| `p` | wire path (canonical form, see above; drive or `UNC:`), base64url (no padding) encoded |
 | `z` | optional zip entry inside `p`, base64url encoded (empty/missing = none) |
 | `e` | expiry, unix seconds |
 | `s` | lower-case hex `HMAC-SHA256(secret, "raw\n" + p + "\n" + z + "\n" + e)`, where `p`/`z`/`e` are the *encoded* query values exactly as sent |
@@ -50,8 +75,9 @@ http_listen   = "0.0.0.0:7701"
 shared_secret = "change-me-to-a-long-random-string"
 
 [access]
-# Only paths below these roots are accessible (forward or back slashes).
-roots = ["U:/", "D:/Media"]
+# Only paths below these roots are accessible (forward or back slashes,
+# drive or UNC; UNC may be written \\server\share, //server/share or UNC:/server/share).
+roots = ["U:/", "D:/Media", '\\LIL_NAS_X\MainStoragePool\StashLib']
 
 [tools]
 ffmpeg  = "C:/ffmpeg/bin/ffmpeg.exe"   # default: ffmpeg on PATH
@@ -80,6 +106,12 @@ stash-fsd.exe install --config C:\stash-fsd\stash-fsd.toml  # register service (
 stash-fsd.exe uninstall
 stash-fsd.exe print-config                                   # effective config
 ```
+
+The service runs as LocalSystem, which cannot see drive letters mapped by
+a user. Prefer UNC roots for NAS storage: they avoid drive-mapping problems
+entirely. The share must grant access to the machine account (`DOMAIN\HOST$`).
+On a NAS without domain membership, run the service as a user account that
+has access to the share (`sc.exe config stash-fsd obj= .\user password= ...`).
 
 Docker Desktop containers reach the host as `host.docker.internal`; allow
 inbound TCP 7700/7701 for the WSL/Hyper-V virtual network in Windows

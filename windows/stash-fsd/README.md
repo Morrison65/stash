@@ -44,8 +44,11 @@ static C runtime and only imports DLLs that ship with Windows.
    ```
 
 LocalSystem does not see drive letters that a user mapped to network shares.
-Use local drives, UNC roots (`//nas/share/media`), or change the service
-account (`sc.exe config stash-fsd obj= .\user password= ...`).
+For NAS storage, use UNC roots such as
+`'\\LIL_NAS_X\MainStoragePool\StashLib'`; UNC avoids drive-mapping problems.
+The share must then be accessible to the machine account (`DOMAIN\HOST$`).
+Otherwise, run the service as a user account that has access to the share
+(`sc.exe config stash-fsd obj= .\user password= ...`).
 
 ### Firewall
 
@@ -101,10 +104,14 @@ scripts/dev/go.sh go run ./cmd/fsd-smoke -addr host.docker.internal:7700 \
 
 ## Behaviour notes
 
-* Paths on the wire use forward slashes (`U:/Media/x.mp4`, `//nas/share/x`).
-  Backslashes are accepted. `U:` means `U:/` because Go's `filepath.Dir` on
-  Linux produces it. A single leading slash (`/nas/share/x`) is read as UNC
-  because Go's `filepath.Clean` on Linux collapses `//`.
+* Every path the service returns uses the canonical wire form: forward
+  slashes, an upper-case drive letter, `U:` for a drive root, and
+  `UNC:/server/share/...` for UNC paths. The same form is used in `/raw` `p`.
+  Input is lenient: `U:/`, `u:`, backslashes, `unc:`, `//server/share` and
+  `\\server\share` are all accepted, also in `roots`. A rooted path without a
+  drive (`/x`) returns `INVALID_ARGUMENT`; relative paths return
+  `PERMISSION_DENIED`. Details:
+  [`docs/architecture/stash-fsd.md`](../../docs/architecture/stash-fsd.md#paths-on-the-wire).
 * Paths are cleaned lexically. A `..` that climbs above the volume, or any
   path outside the roots, returns `PERMISSION_DENIED`. Symlinks and junctions
   inside a root are followed, even when their target is outside the roots.
@@ -114,8 +121,9 @@ scripts/dev/go.sh go run ./cmd/fsd-smoke -addr host.docker.internal:7700 \
 * `ReadAt` returns up to 8 MiB, which is more than gRPC-Go's default 4 MiB
   receive limit, so clients must set `grpc.MaxCallRecvMsgSize`.
 * `Run`: a tool that fails to start is reported as a gRPC error
-  (`FAILED_PRECONDITION`), not as a `RunStatus`. If the client disconnects,
-  the process is killed. The process runs with the workspace as its working
+  (`FAILED_PRECONDITION`), not as a `RunStatus`. If the client cancels the
+  call or disconnects, the process is killed immediately, even if it writes
+  no stdout. The process runs with the workspace as its working
   directory.
 * `ListWorkspace` on a workspace that does not exist returns an empty list;
   `DeleteWorkspace` on a missing workspace succeeds.
