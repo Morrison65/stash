@@ -70,3 +70,7 @@ dist
 
 # local compose environment (contains secrets)
 deploy/compose/.env
+
+# stash-fsd (Rust) build output
+windows/stash-fsd/target/
+windows/stash-fsd/dist/

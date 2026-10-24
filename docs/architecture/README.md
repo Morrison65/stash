@@ -53,7 +53,7 @@ Base commit: upstream `4de2351` (branch `microservices`).
   stored as `UNC:/nas/share/clip.mp4`. A leading `//` cannot be used because
   `filepath.Clean`/`Join` on Linux collapse it to `/`. Input in any form
   (`\\nas\share`, `//nas/share`, `unc:/nas/share`) is normalised by
-  `file.NormalizeLibraryPath`.
+  `file.NormalizeLibraryPath`. Details: [stash-fsd.md](stash-fsd.md#paths-on-the-wire).
 * Everything else in the configuration is a **Unix path inside the
   containers** (`python_path: /usr/local/bin/python`, `generated: /generated`,
   `plugins_path: /config/plugins`, ...).

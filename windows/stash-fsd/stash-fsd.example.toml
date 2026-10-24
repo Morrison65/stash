@@ -1,0 +1,41 @@
+# stash-fsd configuration. Copy to stash-fsd.toml next to stash-fsd.exe, or to
+# %ProgramData%\stash-fsd\stash-fsd.toml, or pass --config <path>.
+# Paths may use forward or back slashes.
+
+[server]
+grpc_listen   = "0.0.0.0:7700"
+http_listen   = "0.0.0.0:7701"
+# Shared with the Stash containers (gRPC bearer token + HTTP signatures).
+# Must be changed: the service refuses to start with this placeholder.
+# Generate one in PowerShell:
+#   -join ((48..57)+(65..90)+(97..122) | Get-Random -Count 48 | % {[char]$_})
+shared_secret = "change-me-to-a-long-random-string"
+
+[access]
+# Only paths below these roots are accessible. Drive roots may be written
+# "U:" or "U:/"; UNC roots as \\server\share\dir, //server/share/dir or
+# UNC:/server/share/dir (use a TOML literal string '...' for backslashes).
+#
+# The service runs as LocalSystem, which does not see drive letters mapped by
+# a user. Prefer UNC roots for NAS storage. The share must then be accessible
+# to the machine account (DOMAIN\HOST$); otherwise run the service as a user
+# account that has access to the share.
+roots = ["D:/Media", '\\LIL_NAS_X\MainStoragePool\StashLib']
+
+[tools]
+ffmpeg  = ""   # e.g. "C:/ffmpeg/bin/ffmpeg.exe"; empty = ffmpeg on PATH
+ffprobe = ""   # e.g. "C:/ffmpeg/bin/ffprobe.exe"; empty = ffprobe on PATH
+python  = ""   # reserved for Windows-side helpers
+
+[storage]
+workspace_dir = "C:/ProgramData/stash-fsd/work"
+log_dir       = "C:/ProgramData/stash-fsd/logs"
+
+[limits]
+max_concurrent_ffmpeg  = 4
+max_concurrent_hash    = 8
+ffmpeg_timeout_seconds = 3600
+walk_batch_size        = 512
+
+[log]
+level = "info"   # error|warn|info|debug|trace (RUST_LOG overrides)
