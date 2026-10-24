@@ -104,6 +104,9 @@ type Cache struct {
 	plugins      []Config
 	sessionStore *session.Store
 	gqlHandler   http.Handler
+
+	// async runs hooks that are not marked sync: in the background
+	async *asyncHookRunner
 }
 
 // NewCache returns a new Cache.
@@ -116,7 +119,13 @@ type Cache struct {
 func NewCache(config ServerConfig) *Cache {
 	return &Cache{
 		config: config,
+		async:  newAsyncHookRunner(),
 	}
+}
+
+// WaitForAsyncHooks blocks until all queued asynchronous hooks have run.
+func (c *Cache) WaitForAsyncHooks() {
+	c.async.Wait()
 }
 
 func (c *Cache) RegisterGQLHandler(handler http.Handler) {
@@ -401,39 +410,59 @@ func (c Cache) executePostHooks(ctx context.Context, hookType hook.TriggerEnum, 
 		}
 
 		for _, h := range hooks {
-			newCtx := session.AddVisitedPluginHook(ctx, p.id, hookType)
-			serverConnection := c.makeServerConnection(newCtx)
-
-			pluginInput := buildPluginInput(&p, &h.OperationConfig, serverConnection, nil)
-			addHookContext(pluginInput.Args, hookContext)
-
-			pt := pluginTask{
-				plugin:       &p,
-				operation:    &h.OperationConfig,
-				input:        pluginInput,
-				gqlHandler:   c.gqlHandler,
-				serverConfig: c.config,
-			}
-
-			task := pt.createTask()
-			if err := task.Start(); err != nil {
-				return err
-			}
-
-			if err := waitForTask(ctx, task); err != nil {
-				return err
-			}
-
-			output := task.GetResult()
-			if output == nil {
-				logger.Debugf("%s [%s]: returned no result", hookType.String(), p.Name)
-			} else {
-				if output.Error != nil {
-					logger.Errorf("%s [%s]: returned error: %s", hookType.String(), p.Name, *output.Error)
-				} else if output.Output != nil {
-					logger.Debugf("%s [%s]: returned: %v", hookType.String(), p.Name, output.Output)
+			if h.sync {
+				if err := c.runHook(ctx, &p, h.HookConfig, hookType, hookContext); err != nil {
+					return err
 				}
+				continue
 			}
+
+			// asynchronous: the operation that fired the hook does not wait
+			hookCtx := detach(ctx)
+			c.async.enqueue(p.id, func() {
+				if err := c.runHook(hookCtx, &p, h.HookConfig, hookType, hookContext); err != nil {
+					logger.Errorf("%s [%s]: async hook failed: %v", hookType.String(), p.Name, err)
+				}
+			})
+		}
+	}
+
+	return nil
+}
+
+// runHook executes one hook of plugin p and waits for it to finish.
+func (c Cache) runHook(ctx context.Context, p *Config, h *HookConfig, hookType hook.TriggerEnum, hookContext common.HookContext) error {
+	newCtx := session.AddVisitedPluginHook(ctx, p.id, hookType)
+	serverConnection := c.makeServerConnection(newCtx)
+
+	pluginInput := buildPluginInput(p, &h.OperationConfig, serverConnection, nil)
+	addHookContext(pluginInput.Args, hookContext)
+
+	pt := pluginTask{
+		plugin:       p,
+		operation:    &h.OperationConfig,
+		input:        pluginInput,
+		gqlHandler:   c.gqlHandler,
+		serverConfig: c.config,
+	}
+
+	task := pt.createTask()
+	if err := task.Start(); err != nil {
+		return err
+	}
+
+	if err := waitForTask(ctx, task); err != nil {
+		return err
+	}
+
+	output := task.GetResult()
+	if output == nil {
+		logger.Debugf("%s [%s]: returned no result", hookType.String(), p.Name)
+	} else {
+		if output.Error != nil {
+			logger.Errorf("%s [%s]: returned error: %s", hookType.String(), p.Name, *output.Error)
+		} else if output.Output != nil {
+			logger.Debugf("%s [%s]: returned: %v", hookType.String(), p.Name, output.Output)
 		}
 	}
 

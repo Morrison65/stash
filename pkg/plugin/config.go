@@ -277,12 +277,19 @@ func (c Config) getTask(name string) *OperationConfig {
 	return nil
 }
 
-func (c Config) getHooks(hookType hook.TriggerEnum) []*HookConfig {
-	var ret []*HookConfig
+// hookMatch is a hook configured for a trigger, and whether the trigger was
+// marked to run synchronously (see SyncTriggerPrefix).
+type hookMatch struct {
+	*HookConfig
+	sync bool
+}
+
+func (c Config) getHooks(hookType hook.TriggerEnum) []hookMatch {
+	var ret []hookMatch
 	for _, h := range c.Hooks {
 		for _, t := range h.TriggeredBy {
-			if hookType == t {
-				ret = append(ret, h)
+			if base, sync := parseTrigger(t); base == hookType {
+				ret = append(ret, hookMatch{HookConfig: h, sync: sync})
 			}
 		}
 	}

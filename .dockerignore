@@ -55,3 +55,11 @@ stash
 dist
 
 docker
+
+####
+# Microservice build
+####
+.claude
+.git
+windows
+internal/api/generated_*.go

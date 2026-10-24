@@ -40,6 +40,7 @@ var (
 		"generated":     Generated,
 		"metadata":      Metadata,
 		"blobs":         BlobsPath,
+		"database":      Database,
 		"cache":         Cache,
 		"stash":         Stash,
 		"ui":            UILocation,

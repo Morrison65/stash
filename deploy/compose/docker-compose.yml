@@ -1,0 +1,68 @@
+# Stash microservice stack (container part). The media library is NOT
+# mounted: all library access goes to stash-fsd on the Windows host.
+#
+#   cp .env.example .env   # set STASH_FSD_SECRET (same as stash-fsd.toml)
+#   docker compose up -d --build
+#
+# See docs/architecture/README.md.
+name: stashms
+
+services:
+  gateway:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: gateway
+    image: stashms/gateway:dev
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "${STASH_GATEWAY_PORT:-9990}:80"
+    environment:
+      API_UPSTREAM: api:9999
+      FSD_HTTP_UPSTREAM: ${STASH_FSD_HTTP:-host.docker.internal:7701}
+      MAX_UPLOAD_SIZE: ${STASH_MAX_UPLOAD_SIZE:-1g}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: api
+    image: stashms/api:dev
+    restart: unless-stopped
+    # The API also hosts the scheduler while the database is SQLite, which
+    # must be owned by exactly one process.
+    environment:
+      STASH_FSD_ADDRESS: ${STASH_FSD_GRPC:-host.docker.internal:7700}
+      STASH_FSD_SECRET: ${STASH_FSD_SECRET:?set STASH_FSD_SECRET in .env}
+      STASH_FSD_ACCEL_PREFIX: /_fsd
+      STASH_DATABASE: /database/stash-go.sqlite
+      STASH_BLOBS: /blobs/
+      STASH_SQLITE_CACHE_SIZE: ${STASH_SQLITE_CACHE_SIZE:--262144}
+      TZ: ${TZ:-Europe/Berlin}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - config:/config
+      - database:/database
+      - generated:/generated
+      - cache:/cache
+      - blobs:/blobs
+      - metadata:/metadata
+    logging:
+      driver: json-file
+      options:
+        max-file: "10"
+        max-size: "2m"
+
+volumes:
+  config:
+  database:
+  generated:
+  cache:
+  blobs:
+  metadata:

@@ -67,3 +67,6 @@ dist
 
 # Claude Code worktrees / local state
 /.claude/
+
+# local compose environment (contains secrets)
+deploy/compose/.env
