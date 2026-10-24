@@ -92,6 +92,11 @@ ENTRYPOINT ["stash"]
 FROM nginx:1.28-alpine AS gateway
 COPY --from=ui /stash/ui/v2.5/build /usr/share/stash-ui
 COPY deploy/gateway/default.conf.template /etc/nginx/templates/default.conf.template
+COPY --chmod=0755 deploy/gateway/05-fsd-ipv4.envsh /docker-entrypoint.d/05-fsd-ipv4.envsh
+# Workers run as root: the generated volume is mounted read-only, and files
+# written by earlier Stash versions are 0600 (root only), so the default nginx
+# user could not serve existing previews.
+RUN sed -i 's/^user  *nginx;/user  root;/' /etc/nginx/nginx.conf && grep -q '^user  root;' /etc/nginx/nginx.conf
 ENV API_UPSTREAM=api:9999 \
     FSD_HTTP_UPSTREAM=host.docker.internal:7701 \
     MAX_UPLOAD_SIZE=1g

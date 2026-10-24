@@ -1,0 +1,21 @@
+#!/bin/sh
+# Sourced by the nginx image entrypoint before the templates are rendered.
+#
+# host.docker.internal (extra_hosts: host-gateway) resolves to an IPv4 and an
+# IPv6 address. stash-fsd usually listens on IPv4 only and the container has
+# no IPv6 route, so an nginx upstream with both addresses would send part of
+# the requests to an unreachable peer first. Pin FSD_HTTP_UPSTREAM to IPv4
+# when the host name has an IPv4 address.
+
+fsd_host="${FSD_HTTP_UPSTREAM%:*}"
+fsd_port="${FSD_HTTP_UPSTREAM##*:}"
+
+case "$fsd_host" in
+    *[!0-9.]*)
+        fsd_ip="$(getent ahostsv4 "$fsd_host" 2>/dev/null | awk 'NR==1 { print $1 }')"
+        if [ -n "$fsd_ip" ]; then
+            echo "05-fsd-ipv4: $fsd_host -> $fsd_ip"
+            export FSD_HTTP_UPSTREAM="$fsd_ip:$fsd_port"
+        fi
+        ;;
+esac
