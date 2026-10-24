@@ -24,6 +24,11 @@ server {
     client_max_body_size ${MAX_UPLOAD_SIZE};
     root /usr/share/stash-ui;
 
+    # Headers as in Stash's reverse proxy guide
+    # (https://docs.stashapp.cc/guides/reverse-proxy/). Stash builds its base
+    # URL from Host (incl. the port), X-Forwarded-Proto and, when served under
+    # a prefix, X-Forwarded-Prefix (not used: the gateway serves the root).
+    # X-Forwarded-Port is not read by Stash and would be the container's 80.
     proxy_http_version 1.1;
     proxy_set_header Host              $http_host;
     proxy_set_header X-Real-IP         $remote_addr;
@@ -48,7 +53,8 @@ server {
         proxy_pass http://stash_api;
     }
 
-    # Service worker (UI config in IndexedDB): must always be revalidated.
+    # sw.js removes the former UI config service worker from browsers that
+    # still have it; it must always be revalidated.
     location = /sw.js {
         gzip_static always;
         gunzip on;
@@ -56,11 +62,12 @@ server {
         try_files $uri =404;
     }
 
-    # GraphQL incl. graphql-ws subscriptions.
+    # GraphQL incl. graphql-ws subscriptions. Long timeouts as in the guide
+    # (slow operations such as database migrations, idle subscriptions).
     location /graphql {
         proxy_pass http://stash_api;
-        proxy_read_timeout 1h;
-        proxy_send_timeout 1h;
+        proxy_read_timeout 60000s;
+        proxy_send_timeout 60000s;
     }
 
     # Raw library files streamed straight from stash-fsd on Windows. Only
@@ -94,7 +101,7 @@ server {
         proxy_pass http://stash_api;
         proxy_buffering off;
         proxy_request_buffering off;
-        proxy_read_timeout 1h;
-        proxy_send_timeout 1h;
+        proxy_read_timeout 60000s;
+        proxy_send_timeout 60000s;
     }
 }
