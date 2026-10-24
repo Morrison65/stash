@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 
+mod activity;
 mod config;
 mod errors;
 mod fileinfo;

@@ -11,6 +11,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
 use tonic::{Request, Response, Status};
 
+use crate::activity;
 use crate::errors::{io_status, join_status};
 use crate::fileinfo::file_info;
 use crate::hash::{self, StreamHasher};
@@ -72,16 +73,19 @@ fn stat_info(p: &WirePath, follow: bool) -> Result<FileInfo, Status> {
 #[tonic::async_trait]
 impl FileSystem for FsService {
     async fn stat(&self, req: Request<PathRequest>) -> Result<Response<FileInfo>, Status> {
+        activity::STAT.add(1);
         let p = self.check(&req.into_inner().path)?;
         Ok(Response::new(blocking(move || stat_info(&p, true)).await?))
     }
 
     async fn lstat(&self, req: Request<PathRequest>) -> Result<Response<FileInfo>, Status> {
+        activity::STAT.add(1);
         let p = self.check(&req.into_inner().path)?;
         Ok(Response::new(blocking(move || stat_info(&p, false)).await?))
     }
 
     async fn read_dir(&self, req: Request<PathRequest>) -> Result<Response<ReadDirResponse>, Status> {
+        activity::READDIR.add(1);
         let p = self.check(&req.into_inner().path)?;
         let entries = blocking(move || {
             let list = walk::read_dir_sorted(&p.to_native()).map_err(|e| io_status("readdir", &p.to_wire(), &e))?;
@@ -104,6 +108,8 @@ impl FileSystem for FsService {
     async fn walk(&self, req: Request<WalkRequest>) -> Result<Response<Self::WalkStream>, Status> {
         let r = req.into_inner();
         let root = self.check(&r.root)?;
+        activity::WALK.add(1);
+        tracing::info!("scan {root}");
         let batch = if r.batch_size == 0 {
             self.st.cfg.walk_batch_size()
         } else {
@@ -144,6 +150,8 @@ impl FileSystem for FsService {
         if r.length < 0 || r.length > MAX_READ_AT {
             return Err(Status::invalid_argument(format!("length must be between 0 and {MAX_READ_AT}")));
         }
+        activity::READ.add(1);
+        activity::READ_BYTES.add(r.length as u64);
         let resp = blocking(move || {
             let w = p.to_wire();
             let mut f = File::open(p.to_native()).map_err(|e| io_status("open", &w, &e))?;
@@ -175,6 +183,7 @@ impl FileSystem for FsService {
         if r.offset < 0 || r.length < 0 {
             return Err(Status::invalid_argument("offset and length must be >= 0"));
         }
+        activity::READ.add(1);
         let w = p.to_wire();
         let mut f = tokio::fs::File::open(p.to_native()).await.map_err(|e| io_status("open", &w, &e))?;
         let md = f.metadata().await.map_err(|e| io_status("stat", &w, &e))?;
@@ -219,7 +228,9 @@ impl FileSystem for FsService {
         let dst = self.check(&r.new_path)?;
         self.deny_root(&src, "rename")?;
         let ci = self.st.roots.case_insensitive();
-        blocking(move || {
+        let what = format!("{src} -> {dst}");
+        let started = std::time::Instant::now();
+        let res = blocking(move || {
             let (sn, dn) = (src.to_native(), dst.to_native());
             fs::symlink_metadata(&sn).map_err(|e| io_status("rename", &src.to_wire(), &e))?;
             // A case-only rename on a case-insensitive volume targets the same
@@ -229,22 +240,31 @@ impl FileSystem for FsService {
             }
             ops::safe_move(&sn, &dn).map_err(|e| io_status("rename", &format!("{src} -> {dst}"), &e))
         })
-        .await?;
+        .await;
+        match &res {
+            Ok(()) => tracing::info!("rename {what} ({} ms)", started.elapsed().as_millis()),
+            Err(e) => tracing::warn!("rename {what} failed: {}", e.message()),
+        }
+        res?;
         Ok(Response::new(Empty {}))
     }
 
     async fn remove(&self, req: Request<PathRequest>) -> Result<Response<Empty>, Status> {
         let p = self.check(&req.into_inner().path)?;
         self.deny_root(&p, "remove")?;
+        let what = p.to_wire();
         blocking(move || ops::remove(&p.to_native()).map_err(|e| io_status("remove", &p.to_wire(), &e))).await?;
+        tracing::info!("remove {what}");
         Ok(Response::new(Empty {}))
     }
 
     async fn remove_all(&self, req: Request<PathRequest>) -> Result<Response<Empty>, Status> {
         let p = self.check(&req.into_inner().path)?;
         self.deny_root(&p, "remove")?;
+        let what = p.to_wire();
         blocking(move || ops::remove_all(&p.to_native()).map_err(|e| io_status("removeall", &p.to_wire(), &e)))
             .await?;
+        tracing::info!("remove (recursive) {what}");
         Ok(Response::new(Empty {}))
     }
 
@@ -253,6 +273,7 @@ impl FileSystem for FsService {
         let src = self.check(&r.path)?;
         let trash = self.check(&r.trash_dir)?;
         self.deny_root(&src, "trash")?;
+        let what = src.to_wire();
         let dest = blocking(move || {
             fs::symlink_metadata(src.to_native()).map_err(|e| io_status("trash", &src.to_wire(), &e))?;
             fs::create_dir_all(trash.to_native()).map_err(|e| io_status("mkdir", &trash.to_wire(), &e))?;
@@ -266,6 +287,7 @@ impl FileSystem for FsService {
             Ok(dest)
         })
         .await?;
+        tracing::info!("trash {what} -> {dest}");
         Ok(Response::new(PathResponse { path: dest.to_wire() }))
     }
 }
@@ -369,6 +391,7 @@ impl Hasher for HashService {
             .acquire_owned()
             .await
             .map_err(|_| Status::unavailable("shutting down"))?;
+        activity::HASH.add(1);
         let entry = r.zip_entry;
         let resp = blocking(move || fingerprint_blocking(&p, &entry, want_md5, want_oshash)).await?;
         Ok(Response::new(resp))

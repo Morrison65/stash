@@ -10,6 +10,7 @@ use tokio::sync::watch;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::service::interceptor::InterceptedService;
 
+use crate::activity;
 use crate::config::Config;
 use crate::fs_service::{FsService, HashService};
 use crate::media::{self, MediaService};
@@ -47,6 +48,8 @@ pub async fn run(cfg: Config, shutdown: impl Future<Output = ()> + Send + 'stati
     let stopped = |mut rx: watch::Receiver<bool>| async move {
         let _ = rx.wait_for(|v| *v).await;
     };
+
+    tokio::spawn(activity::report(Duration::from_secs(60), stop_rx.clone()));
 
     // Periodically remove abandoned workspaces.
     {

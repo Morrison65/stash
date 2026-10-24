@@ -2,8 +2,6 @@ package manager
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -101,7 +99,7 @@ func initRemoteLibrary() (*remotefs.Client, error) {
 		IsRemote: isRemote,
 	})
 
-	ffmpeg.SetRemote(&fsdRunner{c: client}, isRemote)
+	ffmpeg.SetRemote(&remotefs.FFmpegRunner{C: client}, isRemote)
 	ffmpeg.OpenMediaFile = func(path string) (io.ReadCloser, error) {
 		return file.Library().Open(path)
 	}
@@ -157,51 +155,6 @@ func ServeLibraryFileAccel(w http.ResponseWriter, path string, zipEntry string) 
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	return true
-}
-
-// fsdRunner adapts remotefs.Client to ffmpeg.RemoteRunner.
-type fsdRunner struct {
-	c *remotefs.Client
-}
-
-func (r *fsdRunner) Probe(ctx context.Context, path string, extraArgs []string) ([]byte, int64, error) {
-	ret, err := r.c.Probe(ctx, path, extraArgs...)
-	if err != nil {
-		return nil, 0, err
-	}
-	return ret.JSON, ret.Size, nil
-}
-
-func (r *fsdRunner) Run(ctx context.Context, ffprobe bool, args []string, inputs []string, stdin []byte, workspace string, w io.Writer) ([]byte, error) {
-	stderr, err := r.c.Run(ctx, remotefs.RunRequest{
-		FFprobe:   ffprobe,
-		Args:      args,
-		Inputs:    inputs,
-		Stdin:     stdin,
-		Workspace: workspace,
-		Priority:  remotefs.PriorityNormal,
-	}, w)
-
-	var runErr *remotefs.RunError
-	if errors.As(err, &runErr) {
-		return []byte(stderr), &ffmpeg.RemoteExitError{
-			ExitCode: runErr.ExitCode,
-			Stderr:   []byte(runErr.Stderr),
-			TimedOut: runErr.TimedOut,
-		}
-	}
-	if err != nil {
-		return []byte(stderr), fmt.Errorf("stash-fsd: %w", err)
-	}
-	return []byte(stderr), nil
-}
-
-func (r *fsdRunner) FetchWorkspaceFile(ctx context.Context, workspace, name string, w io.Writer) error {
-	return r.c.FetchWorkspaceFile(ctx, workspace, name, w)
-}
-
-func (r *fsdRunner) DeleteWorkspace(ctx context.Context, workspace string) error {
-	return r.c.DeleteWorkspace(ctx, workspace)
 }
 
 // envGeneratedAccelPrefix is the path prefix of the gateway's internal

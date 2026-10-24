@@ -50,7 +50,9 @@ ARG STASH_VERSION
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     make flags-release flags-static-pie stash && \
     go build -trimpath -buildmode=pie -tags "sqlite_omit_load_extension osusergo netgo" \
-        -ldflags "-s -w -extldflags=-static-pie" -o /stash/stash-pathfix ./cmd/stash-pathfix
+        -ldflags "-s -w -extldflags=-static-pie" -o /stash/stash-pathfix ./cmd/stash-pathfix && \
+    CGO_ENABLED=0 go build -trimpath -tags "osusergo netgo" -ldflags "-s -w" \
+        -o /stash/stash-ffshim ./cmd/stash-ffshim
 
 # ---------------------------------------------------------------------------
 # api: GraphQL API, business logic, scheduler, plugins and scrapers
@@ -62,6 +64,13 @@ RUN apk add --no-cache ca-certificates tzdata ffmpeg vips-tools \
         python3 py3-pip py3-requests py3-yaml curl
 COPY --from=backend /stash/stash /usr/bin/stash
 COPY --from=backend /stash/stash-pathfix /usr/bin/stash-pathfix
+# plugins' ffprobe/ffmpeg calls on library files run on Windows (stash-fsd),
+# and plugin Python reads library files through it (deploy/python)
+COPY --from=backend /stash/stash-ffshim /usr/local/bin/ffprobe
+COPY --from=backend /stash/stash-ffshim /usr/local/bin/ffmpeg
+COPY --from=backend /stash/stash-ffshim /usr/local/bin/stash-libfs
+COPY deploy/python/stash_libfs.py deploy/python/sitecustomize.py /usr/local/lib/stash-python/
+ENV PYTHONPATH=/usr/local/lib/stash-python
 ENV STASH_CONFIG_FILE=/config/config.yml \
     STASH_GENERATED=/generated/ \
     STASH_CACHE=/cache/ \
@@ -82,6 +91,13 @@ ENTRYPOINT ["stash"]
 FROM ${PLUGIN_RUNTIME_IMAGE} AS api-plugins
 COPY --from=backend /stash/stash /usr/bin/stash
 COPY --from=backend /stash/stash-pathfix /usr/bin/stash-pathfix
+# plugins' ffprobe/ffmpeg calls on library files run on Windows (stash-fsd),
+# and plugin Python reads library files through it (deploy/python)
+COPY --from=backend /stash/stash-ffshim /usr/local/bin/ffprobe
+COPY --from=backend /stash/stash-ffshim /usr/local/bin/ffmpeg
+COPY --from=backend /stash/stash-ffshim /usr/local/bin/stash-libfs
+COPY deploy/python/stash_libfs.py deploy/python/sitecustomize.py /usr/local/lib/stash-python/
+ENV PYTHONPATH=/usr/local/lib/stash-python
 ENV STASH_CONFIG_FILE=/config/config.yml
 EXPOSE 9999
 ENTRYPOINT ["stash"]

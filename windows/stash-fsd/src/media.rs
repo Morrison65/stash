@@ -13,6 +13,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
 use tonic::{Request, Response, Status};
 
+use crate::activity;
 use crate::errors::io_status;
 use crate::fileinfo::{file_info_named, mtime_nanos};
 use crate::fs_service::{blocking, BoxStream, STREAM_CHUNK};
@@ -259,6 +260,7 @@ impl Media for MediaService {
     }
 
     async fn probe(&self, req: Request<ProbeRequest>) -> Result<Response<ProbeResponse>, Status> {
+        activity::PROBE.add(1);
         let r = req.into_inner();
         let p = self.st.roots.check(&r.path)?;
         let native = p.to_native();
@@ -330,6 +332,12 @@ impl Media for MediaService {
         };
         let ws_str = ws_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
         let args = substitute_args(&r.args, &inputs, ws_str.as_deref())?;
+        let tool_name = if matches!(Tool::try_from(r.tool), Ok(Tool::Ffprobe)) { "ffprobe" } else { "ffmpeg" };
+        if inputs.is_empty() {
+            tracing::info!("{tool_name} run");
+        } else {
+            tracing::info!("{tool_name} on {}", inputs.join(", "));
+        }
         let timeout = if r.timeout_seconds > 0 {
             Duration::from_secs(r.timeout_seconds as u64)
         } else {

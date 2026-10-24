@@ -19,6 +19,7 @@ use sha2::Sha256;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
+use crate::activity;
 use crate::fileinfo::unix_nanos;
 use crate::fs_service::find_zip_entry;
 use crate::state::AppState;
@@ -283,6 +284,16 @@ async fn raw(
             return plain(StatusCode::FORBIDDEN, "path not allowed");
         }
     };
+
+    activity::STREAM.add(1);
+    // a new playback (no range, or from the start); seeks are only counted
+    let from_start = headers
+        .get(axum::http::header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .map_or(true, |r| r.trim_start_matches("bytes=").starts_with("0-"));
+    if from_start && method == Method::GET {
+        tracing::info!("stream {wp}");
+    }
 
     let native = wp.to_native();
     let resolved = match tokio::task::spawn_blocking(move || resolve(native, zip_entry)).await {
