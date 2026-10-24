@@ -10,6 +10,7 @@ import (
 	"github.com/stashapp/stash/internal/manager/config"
 	"github.com/stashapp/stash/internal/static"
 	"github.com/stashapp/stash/pkg/ffmpeg"
+	"github.com/stashapp/stash/pkg/file"
 	"github.com/stashapp/stash/pkg/fsutil"
 	"github.com/stashapp/stash/pkg/logger"
 	"github.com/stashapp/stash/pkg/models"
@@ -58,7 +59,9 @@ func (s *SceneServer) StreamSceneDirect(scene *models.Scene, w http.ResponseWrit
 	_, filename := filepath.Split(fp)
 	contentDisposition := mime.FormatMediaType("inline", map[string]string{"filename": filename})
 	w.Header().Set("Content-Disposition", contentDisposition)
-	http.ServeFile(w, r, fp)
+	// the stream path is either the library file (stash-fsd) or a generated
+	// transcode (container volume); the library file system routes both
+	file.ServeLibraryFile(w, r, fp)
 }
 
 func (s *SceneServer) ServeScreenshot(scene *models.Scene, w http.ResponseWriter, r *http.Request) {

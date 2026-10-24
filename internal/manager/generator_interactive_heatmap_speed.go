@@ -12,6 +12,7 @@ import (
 	"sort"
 
 	"github.com/lucasb-eyer/go-colorful"
+	"github.com/stashapp/stash/pkg/file"
 	"github.com/stashapp/stash/pkg/fsutil"
 	"github.com/stashapp/stash/pkg/logger"
 )
@@ -90,7 +91,7 @@ func (g *InteractiveHeatmapSpeedGenerator) Generate(funscriptPath string, heatma
 }
 
 func (g *InteractiveHeatmapSpeedGenerator) LoadFunscriptData(path string, sceneDuration float64) (Script, error) {
-	data, err := os.ReadFile(path)
+	data, err := file.Library().ReadFile(path)
 	if err != nil {
 		return Script{}, err
 	}
@@ -364,7 +365,7 @@ func getSegmentColor(intensity float64) colorful.Color {
 }
 
 func LoadFunscriptData(path string) (Script, error) {
-	data, err := os.ReadFile(path)
+	data, err := file.Library().ReadFile(path)
 	if err != nil {
 		return Script{}, err
 	}

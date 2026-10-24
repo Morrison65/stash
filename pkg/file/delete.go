@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 
-	"github.com/stashapp/stash/pkg/fsutil"
 	"github.com/stashapp/stash/pkg/logger"
 	"github.com/stashapp/stash/pkg/models"
 	"github.com/stashapp/stash/pkg/txn"
@@ -47,12 +45,15 @@ func (r renamerRemoverImpl) Stat(path string) (fs.FileInfo, error) {
 }
 
 func newRenamerRemoverImpl() renamerRemoverImpl {
+	// the library file system routes media-library paths to stash-fsd and
+	// container paths (generated files) to the local OS. Its Rename has
+	// fsutil.SafeMove semantics to support cross-device moves.
+	lib := Library()
 	return renamerRemoverImpl{
-		// use fsutil.SafeMove to support cross-device moves
-		RenameFn:    fsutil.SafeMove,
-		RemoveFn:    os.Remove,
-		RemoveAllFn: os.RemoveAll,
-		StatFn:      os.Stat,
+		RenameFn:    lib.Rename,
+		RemoveFn:    lib.Remove,
+		RemoveAllFn: lib.RemoveAll,
+		StatFn:      lib.Stat,
 	}
 }
 
@@ -220,7 +221,7 @@ func (d *Deleter) Commit() {
 func (d *Deleter) renameForDelete(path string, bypassTrash bool) error {
 	if d.TrashPath != "" && !bypassTrash {
 		// Move file to trash immediately
-		trashDest, err := fsutil.MoveToTrash(path, d.TrashPath)
+		trashDest, err := Library().MoveToTrash(path, d.TrashPath)
 		if err != nil {
 			return err
 		}

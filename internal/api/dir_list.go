@@ -2,10 +2,10 @@ package api
 
 import (
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/stashapp/stash/pkg/file"
 	"golang.org/x/text/collate"
 )
 
@@ -23,15 +23,27 @@ func (s dirLister) Bytes(i int) []byte {
 	return []byte(s[i].Name())
 }
 
+// readLibraryDir lists a directory through the library file system, which
+// routes media-library (Windows) paths to stash-fsd and container paths to
+// the local OS.
+func readLibraryDir(path string) ([]fs.DirEntry, error) {
+	f, err := file.Library().Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.ReadDir(-1)
+}
+
 // listDir will return the contents of a given directory path as a string slice
 func listDir(col *collate.Collator, path string) ([]string, error) {
 	var dirPaths []string
 	dirPath := path
 
-	files, err := os.ReadDir(path)
+	files, err := readLibraryDir(path)
 	if err != nil {
 		dirPath = filepath.Dir(path)
-		dirFiles, err := os.ReadDir(dirPath)
+		dirFiles, err := readLibraryDir(dirPath)
 		if err != nil {
 			return dirPaths, err
 		}

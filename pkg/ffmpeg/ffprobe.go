@@ -2,6 +2,7 @@ package ffmpeg
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -214,18 +215,21 @@ func NewFFProbe(path string) *FFProbe {
 
 // NewVideoFile runs ffprobe on the given path and returns a VideoFile.
 func (f *FFProbe) NewVideoFile(videoPath string) (*VideoFile, error) {
-	args := []string{
-		"-v",
-		"quiet",
-		"-print_format", "json",
-		"-show_format",
-		"-show_streams",
-		"-show_error",
-	}
+	args := append([]string(nil), baseProbeArgs...)
 
 	// show_entries stream_side_data=rotation requires 5.x or later ffprobe
 	if f.version.major >= 5 {
 		args = append(args, "-show_entries", "stream_side_data=rotation")
+	}
+
+	if r := remoteFor(videoPath); r != nil {
+		// the remote probe uses the base arguments above; only pass the
+		// extra ones
+		out, size, err := r.Probe(context.Background(), videoPath, args[len(baseProbeArgs):])
+		if err != nil {
+			return nil, fmt.Errorf("FFProbe encountered an error with <%s>: %w", videoPath, err)
+		}
+		return parseOutput(videoPath, out, &size)
 	}
 
 	args = append(args, videoPath)
@@ -237,17 +241,46 @@ func (f *FFProbe) NewVideoFile(videoPath string) (*VideoFile, error) {
 		return nil, fmt.Errorf("FFProbe encountered an error with <%s>.\nError JSON:\n%s\nError: %s", videoPath, string(out), err.Error())
 	}
 
+	return parseOutput(videoPath, out, nil)
+}
+
+// baseProbeArgs are the arguments every probe uses; stash-fsd's Probe RPC
+// applies exactly these itself.
+var baseProbeArgs = []string{
+	"-v",
+	"quiet",
+	"-print_format", "json",
+	"-show_format",
+	"-show_streams",
+	"-show_error",
+}
+
+// parseOutput parses ffprobe JSON output. size is the file size if already
+// known (remote probe); otherwise the file is stat'ed locally.
+func parseOutput(videoPath string, out []byte, size *int64) (*VideoFile, error) {
 	probeJSON := &FFProbeJSON{}
 	if err := json.Unmarshal(out, probeJSON); err != nil {
 		return nil, fmt.Errorf("error unmarshalling video data for <%s>: %s", videoPath, err.Error())
 	}
 
-	return parse(videoPath, probeJSON)
+	return parse(videoPath, probeJSON, size)
 }
 
 // GetReadFrameCount counts the actual frames of the video file.
 // Used when the frame count is missing or incorrect.
 func (f *FFProbe) GetReadFrameCount(path string) (int64, error) {
+	if r := remoteFor(path); r != nil {
+		out, size, err := r.Probe(context.Background(), path, []string{"-count_frames"})
+		if err != nil {
+			return 0, fmt.Errorf("FFProbe encountered an error with <%s>: %w", path, err)
+		}
+		fc, err := parseOutput(path, out, &size)
+		if err != nil {
+			return 0, err
+		}
+		return fc.FrameCount, nil
+	}
+
 	args := []string{"-v", "quiet", "-print_format", "json", "-count_frames", "-show_format", "-show_streams", "-show_error", path}
 	out, err := stashExec.Command(f.path, args...).Output()
 
@@ -255,16 +288,14 @@ func (f *FFProbe) GetReadFrameCount(path string) (int64, error) {
 		return 0, fmt.Errorf("FFProbe encountered an error with <%s>.\nError JSON:\n%s\nError: %s", path, string(out), err.Error())
 	}
 
-	probeJSON := &FFProbeJSON{}
-	if err := json.Unmarshal(out, probeJSON); err != nil {
-		return 0, fmt.Errorf("error unmarshalling video data for <%s>: %s", path, err.Error())
+	fc, err := parseOutput(path, out, nil)
+	if err != nil {
+		return 0, err
 	}
-
-	fc, err := parse(path, probeJSON)
-	return fc.FrameCount, err
+	return fc.FrameCount, nil
 }
 
-func parse(filePath string, probeJSON *FFProbeJSON) (*VideoFile, error) {
+func parse(filePath string, probeJSON *FFProbeJSON, size *int64) (*VideoFile, error) {
 	if probeJSON == nil {
 		return nil, fmt.Errorf("failed to get ffprobe json for <%s>", filePath)
 	}
@@ -285,13 +316,17 @@ func parse(filePath string, probeJSON *FFProbeJSON) (*VideoFile, error) {
 	result.Container = probeJSON.Format.FormatName
 	duration, _ := strconv.ParseFloat(probeJSON.Format.Duration, 64)
 	result.FileDuration = math.Round(duration*100) / 100
-	fileStat, err := os.Stat(filePath)
-	if err != nil {
-		statErr := fmt.Errorf("error statting file <%s>: %w", filePath, err)
-		logger.Errorf("%v", statErr)
-		return nil, statErr
+	if size != nil {
+		result.Size = *size
+	} else {
+		fileStat, err := os.Stat(filePath)
+		if err != nil {
+			statErr := fmt.Errorf("error statting file <%s>: %w", filePath, err)
+			logger.Errorf("%v", statErr)
+			return nil, statErr
+		}
+		result.Size = fileStat.Size()
 	}
-	result.Size = fileStat.Size()
 	result.StartTime, _ = strconv.ParseFloat(probeJSON.Format.StartTime, 64)
 	result.CreationTime = probeJSON.Format.Tags.CreationTime.Time
 
@@ -336,6 +371,7 @@ func parse(filePath string, probeJSON *FFProbeJSON) (*VideoFile, error) {
 			result.Height = videoStream.Width
 		}
 
+		var err error
 		result.VideoStreamDuration, err = strconv.ParseFloat(videoStream.Duration, 64)
 		if err != nil {
 			// Revert to the historical behaviour, which is still correct in the vast majority of cases.

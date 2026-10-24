@@ -14,6 +14,7 @@ import (
 	"github.com/stashapp/stash/internal/manager/config"
 	"github.com/stashapp/stash/internal/manager/task"
 	"github.com/stashapp/stash/pkg/ffmpeg"
+	"github.com/stashapp/stash/pkg/file"
 	"github.com/stashapp/stash/pkg/fsutil"
 	"github.com/stashapp/stash/pkg/logger"
 	"github.com/stashapp/stash/pkg/models"
@@ -100,10 +101,10 @@ func (r *mutationResolver) ConfigureGeneral(ctx context.Context, input ConfigGen
 				}
 			}
 			if isNew {
-				s.Path = filepath.Clean(s.Path)
+				s.Path = file.NormalizeLibraryPath(s.Path)
 
 				// if it exists, it must be directory
-				exists, err := fsutil.DirExists(s.Path)
+				exists, err := file.LibraryDirExists(s.Path)
 				// allow it to not exist but if it does exist it must be a directory
 				if !exists && !errors.Is(err, fs.ErrNotExist) {
 					return makeConfigGeneralResult(), err

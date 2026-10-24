@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-
 	"github.com/stashapp/stash/internal/manager"
 	"github.com/stashapp/stash/internal/static"
 	"github.com/stashapp/stash/pkg/file"
@@ -132,7 +131,7 @@ func (rs imageRoutes) Image(w http.ResponseWriter, r *http.Request) {
 
 func (rs imageRoutes) serveImage(w http.ResponseWriter, r *http.Request, i *models.Image, useDefault bool) {
 	if i.Files.Primary() != nil {
-		err := i.Files.Primary().Base().Serve(&file.OsFS{}, w, r)
+		err := i.Files.Primary().Base().Serve(file.Library(), w, r)
 		if err == nil {
 			return
 		}

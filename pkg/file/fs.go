@@ -23,6 +23,20 @@ func (o *fsOpener) Open() (io.ReadCloser, error) {
 	return o.fs.Open(o.name)
 }
 
+// FS returns the file system the opener reads from.
+func (o *fsOpener) FS() models.FS { return o.fs }
+
+// Path returns the path of the file within FS.
+func (o *fsOpener) Path() string { return o.name }
+
+// PathOpener is an Opener that exposes its file system and path, allowing
+// callers to use file system specific fast paths (e.g. remote hashing).
+type PathOpener interface {
+	Opener
+	FS() models.FS
+	Path() string
+}
+
 // OsFS is a file system backed by the OS.
 type OsFS struct{}
 
@@ -38,8 +52,9 @@ func (f *OsFS) Remove(name string) error {
 	return os.Remove(name)
 }
 
+// Rename moves oldpath to newpath, copying across file systems if needed.
 func (f *OsFS) Rename(oldpath, newpath string) error {
-	return os.Rename(oldpath, newpath)
+	return fsutil.SafeMove(oldpath, newpath)
 }
 
 func (f *OsFS) RemoveAll(path string) error {

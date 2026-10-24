@@ -172,7 +172,7 @@ func (s *Service) deleteFiles(ctx context.Context, scene *models.Scene, fileDele
 		// don't delete files in zip archives
 		if f.ZipFileID == nil {
 			funscriptPath := video.GetFunscriptPath(f.Path)
-			funscriptExists, _ := fsutil.FileExists(funscriptPath)
+			funscriptExists, _ := file.LibraryFileExists(funscriptPath)
 			if funscriptExists {
 				if err := fileDeleter.Files([]string{funscriptPath}); err != nil {
 					return err

@@ -24,6 +24,7 @@ import (
 	"github.com/stashapp/stash/pkg/models/paths"
 	"github.com/stashapp/stash/pkg/pkg"
 	"github.com/stashapp/stash/pkg/plugin"
+	"github.com/stashapp/stash/pkg/remotefs"
 	"github.com/stashapp/stash/pkg/scraper"
 	"github.com/stashapp/stash/pkg/session"
 	"github.com/stashapp/stash/pkg/sqlite"
@@ -59,6 +60,10 @@ type Manager struct {
 	ScraperPackageManager *pkg.Manager
 
 	DLNAService *dlna.Service
+
+	// FsdClient is the connection to stash-fsd, the Windows service that
+	// owns the media library. Nil when the library is local.
+	FsdClient *remotefs.Client
 
 	Database   *sqlite.Database
 	Repository models.Repository
@@ -402,5 +407,9 @@ func (s *Manager) Shutdown() {
 	err := s.Database.Close()
 	if err != nil {
 		logger.Errorf("Error closing database: %s", err)
+	}
+
+	if s.FsdClient != nil {
+		_ = s.FsdClient.Close()
 	}
 }

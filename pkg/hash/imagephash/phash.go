@@ -34,7 +34,7 @@ func Generate(encoder *ffmpeg.FFMpeg, imageFile *models.ImageFile) (*uint64, err
 // Where Go has no built-in decoder for a specific format, ffmpeg is used to convert to BMP first.
 func loadImage(encoder *ffmpeg.FFMpeg, imageFile *models.ImageFile) (image.Image, error) {
 	// try to load with Go's built-in decoders first for better performance
-	reader, err := imageFile.Open(&file.OsFS{})
+	reader, err := imageFile.Open(file.Library())
 	if err != nil {
 		return nil, err
 	}

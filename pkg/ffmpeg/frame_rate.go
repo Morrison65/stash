@@ -25,10 +25,16 @@ func (f *FFMpeg) CalculateFrameRate(ctx context.Context, v *VideoFile) (*FrameIn
 		Overwrite().
 		NullOutput()
 
-	command := f.Command(ctx, args)
 	var stdErrBuffer bytes.Buffer
-	command.Stderr = &stdErrBuffer // Frames go to stderr rather than stdout
-	err := command.Run()
+	var err error
+	if handled, stderr, rerr := RunRemoteIfNeeded(ctx, args, nil, nil); handled {
+		stdErrBuffer.Write(stderr)
+		err = rerr
+	} else {
+		command := f.Command(ctx, args)
+		command.Stderr = &stdErrBuffer // Frames go to stderr rather than stdout
+		err = command.Run()
+	}
 	if err == nil {
 		var ret FrameInfo
 		stdErrString := stdErrBuffer.String()

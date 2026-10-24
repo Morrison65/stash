@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/stashapp/stash/pkg/job"
 	"github.com/stashapp/stash/pkg/logger"
@@ -386,7 +385,7 @@ func (j *cleanJob) shouldCleanFolder(ctx context.Context, f *models.Folder) bool
 
 	// #3261 - handle symlinks
 	if info.Mode()&os.ModeSymlink == os.ModeSymlink {
-		finalPath, err := filepath.EvalSymlinks(path)
+		finalPath, err := evalSymlinks(j.FS, path)
 		if err != nil {
 			// don't bail out if symlink is invalid
 			logger.Infof("Invalid symlink. Marking to clean: \"%s\"", path)

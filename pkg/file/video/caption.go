@@ -1,6 +1,7 @@
 package video
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/asticode/go-astisub"
+	"github.com/stashapp/stash/pkg/file"
 	"github.com/stashapp/stash/pkg/logger"
 	"github.com/stashapp/stash/pkg/models"
 	"github.com/stashapp/stash/pkg/txn"
@@ -36,9 +38,30 @@ func GetCaptionPath(path, lang, suffix string) string {
 	return fn + "." + captionExt
 }
 
-// ReadSubs reads a captions file
+// ReadSubs reads a captions file from the library file system.
 func ReadSubs(path string) (*astisub.Subtitles, error) {
-	return astisub.OpenFile(path)
+	data, err := file.Library().ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	r := bytes.NewReader(data)
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".srt":
+		return astisub.ReadFromSRT(r)
+	case ".ssa", ".ass":
+		return astisub.ReadFromSSA(r)
+	case ".stl":
+		return astisub.ReadFromSTL(r, astisub.STLOptions{})
+	case ".ts":
+		return astisub.ReadFromTeletext(r, astisub.TeletextOptions{})
+	case ".ttml":
+		return astisub.ReadFromTTML(r)
+	case ".vtt":
+		return astisub.ReadFromWebVTT(r)
+	default:
+		return nil, astisub.ErrInvalidExtension
+	}
 }
 
 // IsValidLanguage checks whether the given string is a valid
@@ -176,7 +199,7 @@ func CleanCaptions(ctx context.Context, f *models.VideoFile, txnMgr txn.Manager,
 
 	for _, caption := range captions {
 		captionPath := caption.Path(filePath)
-		_, err := os.Stat(captionPath)
+		_, err := file.Library().Stat(captionPath)
 		if errors.Is(err, os.ErrNotExist) {
 			logger.Infof("Removing non existent caption %s for %s", caption.Filename, f.Path)
 			changed = true

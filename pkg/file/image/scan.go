@@ -13,7 +13,6 @@ import (
 	_ "image/png"
 
 	"github.com/stashapp/stash/pkg/ffmpeg"
-	"github.com/stashapp/stash/pkg/file"
 	"github.com/stashapp/stash/pkg/file/video"
 	"github.com/stashapp/stash/pkg/logger"
 	"github.com/stashapp/stash/pkg/models"
@@ -30,14 +29,13 @@ type Decorator struct {
 func (d *Decorator) Decorate(ctx context.Context, fs models.FS, f models.File) (models.File, error) {
 	base := f.Base()
 
-	// ignore clips in non-OsFS filesystems as ffprobe cannot read them
-	// TODO - copy to temp file if not an OsFS
-	if _, isOs := fs.(*file.OsFS); !isOs {
+	// ignore clips inside zip files as ffprobe cannot read them
+	if _, isZip := fs.(models.ZipFS); isZip {
 		// AVIF images inside zip files are not supported
 		if strings.ToLower(filepath.Ext(base.Path)) == ".avif" {
 			return nil, fmt.Errorf("%w: %s", ErrUnsupportedAVIFInZip, base.Path)
 		}
-		logger.Debugf("assuming ImageFile for non-OsFS file %q", base.Path)
+		logger.Debugf("assuming ImageFile for zipped file %q", base.Path)
 		return decorateFallback(fs, f)
 	}
 

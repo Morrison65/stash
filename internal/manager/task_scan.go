@@ -131,7 +131,7 @@ func (j *ScanJob) runJob(ctx context.Context, paths []string, nTasks int, progre
 const scanQueueSize = 200000
 
 func (j *ScanJob) queueFiles(ctx context.Context, paths []string, progress *job.Progress) error {
-	fs := &file.OsFS{}
+	fs := file.Library()
 
 	defer func() {
 		close(j.fileQueue)
@@ -527,7 +527,7 @@ func (f *handlerRequiredFilter) Accept(ctx context.Context, ff models.File) bool
 		if !createGallery {
 			// check for presence of .forcegallery
 			forceGalleryPath := filepath.Join(filepath.Dir(path), ".forcegallery")
-			if exists, _ := fsutil.FileExists(forceGalleryPath); exists {
+			if exists, _ := file.LibraryFileExists(forceGalleryPath); exists {
 				createGallery = true
 			}
 		}

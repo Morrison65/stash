@@ -128,6 +128,15 @@ func (g Generator) generateBytes(lockCtx *fsutil.LockContext, p Paths, pattern s
 // Returns an error if the command fails. If the command fails, the return
 // value will be of type *exec.ExitError.
 func (g Generator) generate(ctx *fsutil.LockContext, args []string) error {
+	// commands with library inputs run on stash-fsd; cancelling ctx (the
+	// lock context) cancels the remote process
+	if handled, _, err := ffmpeg.RunRemoteIfNeeded(ctx, args, nil, nil); handled {
+		if err != nil {
+			return fmt.Errorf("error running ffmpeg command <%s>: %w", strings.Join(args, " "), err)
+		}
+		return nil
+	}
+
 	cmd := g.Encoder.Command(ctx, args)
 
 	var stderr bytes.Buffer
@@ -153,9 +162,19 @@ func (g Generator) generate(ctx *fsutil.LockContext, args []string) error {
 
 // GenerateOutput runs ffmpeg with the given args and returns it standard output.
 func (g Generator) generateOutput(lockCtx *fsutil.LockContext, args []string) ([]byte, error) {
-	cmd := g.Encoder.Command(lockCtx, args)
-
 	var stdout bytes.Buffer
+
+	if handled, _, err := ffmpeg.RunRemoteIfNeeded(lockCtx, args, nil, &stdout); handled {
+		if err != nil {
+			return nil, fmt.Errorf("error running ffmpeg command <%s>: %w", strings.Join(args, " "), err)
+		}
+		if stdout.Len() == 0 {
+			return nil, fmt.Errorf("ffmpeg command produced no output: <%s>", strings.Join(args, " "))
+		}
+		return stdout.Bytes(), nil
+	}
+
+	cmd := g.Encoder.Command(lockCtx, args)
 	cmd.Stdout = &stdout
 
 	var stderr bytes.Buffer

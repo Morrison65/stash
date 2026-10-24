@@ -35,6 +35,12 @@ import (
 func Initialize(cfg *config.Config, l *log.Logger) (*Manager, error) {
 	ctx := context.TODO()
 
+	// must happen before anything touches the media library
+	fsdClient, err := initRemoteLibrary()
+	if err != nil {
+		return nil, fmt.Errorf("connecting to stash-fsd: %w", err)
+	}
+
 	db := sqlite.NewDatabase()
 	repo := db.Repository()
 
@@ -83,6 +89,8 @@ func Initialize(cfg *config.Config, l *log.Logger) (*Manager, error) {
 	mgr := &Manager{
 		Config: cfg,
 		Logger: l,
+
+		FsdClient: fsdClient,
 
 		Paths: mgrPaths,
 

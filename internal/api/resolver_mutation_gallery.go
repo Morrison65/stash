@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -401,7 +400,7 @@ func (r *mutationResolver) GalleryDestroy(ctx context.Context, input models.Gall
 		if deleteFile && path != "" && !isStashPath(path) {
 			// try to remove the folder - it is possible that it is not empty
 			// so swallow the error if present
-			_ = os.Remove(path)
+			_ = file.Library().Remove(path)
 		}
 	}
 

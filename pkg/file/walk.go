@@ -60,7 +60,7 @@ func walkSym(f models.FS, filename string, linkDirname string, walkFn fs.WalkDir
 		}
 
 		if err == nil && info.Type()&os.ModeSymlink == os.ModeSymlink {
-			finalPath, err := filepath.EvalSymlinks(path)
+			finalPath, err := evalSymlinks(f, path)
 			if err != nil {
 				// don't bail out if symlink is invalid
 				return walkFn(path, info, err)
@@ -79,6 +79,17 @@ func walkSym(f models.FS, filename string, linkDirname string, walkFn fs.WalkDir
 		return walkFn(path, info, err)
 	}
 	return fsWalk(f, filename, symWalkFunc)
+}
+
+// evalSymlinks resolves symlinks using f if it supports it (e.g. the remote
+// library file system), otherwise using the local OS.
+func evalSymlinks(f models.FS, path string) (string, error) {
+	if e, ok := f.(interface {
+		EvalSymlinks(string) (string, error)
+	}); ok {
+		return e.EvalSymlinks(path)
+	}
+	return filepath.EvalSymlinks(path)
 }
 
 // SymWalk extends filepath.Walk to also follow symlinks

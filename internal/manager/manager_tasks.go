@@ -141,7 +141,7 @@ func (s *Manager) Scan(ctx context.Context, input ScanMetadataInput) (int, error
 			},
 		},
 		FingerprintCalculator: &fingerprintCalculator{s.Config},
-		FS:                    &file.OsFS{},
+		FS:                    file.Library(),
 		ZipFileExtensions:     cfg.GetGalleryExtensions(),
 		// ScanFilters is set in ScanJob.Execute
 		// HandlerRequiredFilters is set in ScanJob.Execute
@@ -320,7 +320,7 @@ type CleanMetadataInput struct {
 
 func (s *Manager) Clean(ctx context.Context, input CleanMetadataInput) int {
 	cleaner := &file.Cleaner{
-		FS:         &file.OsFS{},
+		FS:         file.Library(),
 		Repository: file.NewRepository(s.Repository),
 		Handlers: []file.CleanHandler{
 			&cleanHandler{},

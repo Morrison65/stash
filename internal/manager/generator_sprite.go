@@ -8,8 +8,8 @@ import (
 	"math"
 
 	"github.com/disintegration/imaging"
-
 	"github.com/stashapp/stash/pkg/ffmpeg"
+	"github.com/stashapp/stash/pkg/file"
 	"github.com/stashapp/stash/pkg/fsutil"
 	"github.com/stashapp/stash/pkg/logger"
 	"github.com/stashapp/stash/pkg/scene/generate"
@@ -76,7 +76,7 @@ var DefaultSpriteGeneratorConfig = SpriteGeneratorConfig{
 // NewSpriteGenerator creates a new SpriteGenerator for the given video file and configuration
 // It calculates the appropriate sprite interval and count based on the video duration and the provided configuration
 func NewSpriteGenerator(videoFile ffmpeg.VideoFile, videoChecksum string, imageOutputPath string, vttOutputPath string, config SpriteGeneratorConfig) (*SpriteGenerator, error) {
-	exists, err := fsutil.FileExists(videoFile.Path)
+	exists, err := file.LibraryFileExists(videoFile.Path)
 	if !exists {
 		return nil, err
 	}

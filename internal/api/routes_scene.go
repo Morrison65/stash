@@ -9,11 +9,11 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-
 	"github.com/stashapp/stash/internal/manager"
 	"github.com/stashapp/stash/internal/manager/config"
 	"github.com/stashapp/stash/internal/static"
 	"github.com/stashapp/stash/pkg/ffmpeg"
+	"github.com/stashapp/stash/pkg/file"
 	"github.com/stashapp/stash/pkg/file/video"
 	"github.com/stashapp/stash/pkg/fsutil"
 	"github.com/stashapp/stash/pkg/logger"
@@ -380,7 +380,7 @@ func (rs sceneRoutes) Funscript(w http.ResponseWriter, r *http.Request) {
 	s := r.Context().Value(sceneKey).(*models.Scene)
 	filepath := video.GetFunscriptPath(s.Path)
 
-	utils.ServeStaticFile(w, r, filepath)
+	file.ServeLibraryFile(w, r, filepath)
 }
 
 func (rs sceneRoutes) InteractiveCSV(w http.ResponseWriter, r *http.Request) {

@@ -21,9 +21,9 @@ Base commit: upstream `4de2351` (branch `microservices`).
                         │
      ┌──────────────────┼─────────────────────────────┐ docker compose
      │  api (Go)         ── gRPC ──►  stash-fsd        │
-     │  worker (Go)      ── gRPC ──►  stash-fsd        │
-     │  postgres 17      ◄── api, worker               │
-     │  valkey 8         ◄── api, worker (cache, pub/sub, locks)
+     │   └ scheduler     (own worker container later)  │
+     │  SQLite volume    ◄── api only (PostgreSQL later)│
+     │  valkey 8         ◄── api (cache, pub/sub)      │
      └────────────────────────────────────────────────┘
                                       stash-fsd.exe (Rust, Windows service)
                                         ├─ gRPC  :7700  filesystem, hashing, ffmpeg
@@ -33,9 +33,9 @@ Base commit: upstream `4de2351` (branch `microservices`).
 | Component | Where | Language | Responsibility |
 |---|---|---|---|
 | `gateway` | docker | nginx | Serves the UI build, reverse proxies the API, streams raw media directly from `stash-fsd` via `X-Accel-Redirect`, serves generated files directly from the shared volume. |
-| `api` | docker | Go (`stash serve`) | GraphQL, auth, all request handling. Never runs long work inline: enqueues jobs. Runs plugin *operations* and scrapers (Python lives in this image). |
-| `worker` | docker | Go (`stash worker`) | The scheduler: durable job queue in PostgreSQL, priorities, per-resource concurrency limits (fsd I/O, ffmpeg, network, plugins), executes every job including async plugin hooks. Same image as `api`. |
-| `postgres` | docker | PostgreSQL 17 | Replaces SQLite. |
+| `api` | docker | Go (`stash serve`) | GraphQL, auth, all request handling. Never runs long work inline: enqueues jobs. Runs plugin *operations* and scrapers (Python lives in this image). While the database is SQLite it also hosts the scheduler. |
+| scheduler | inside `api` (own `worker` container once on PostgreSQL) | Go | Durable job queue, priorities, per-resource concurrency limits (fsd I/O, ffmpeg, network, plugins), executes every job including async plugin hooks. Written as a separate component so it can move out. |
+| database | docker volume | SQLite now, PostgreSQL 17 later | See "Database". |
 | `valkey` | docker | Valkey 8 | Global cache (settings, read-query results), pub/sub for job progress, cache invalidation and subscriptions across `api`/`worker`. |
 | `stash-fsd` | Windows host | Rust | The only process that touches library files: stat/readdir/walk, random-access reads, move/rename/delete/trash, md5/oshash, ffprobe, ffmpeg (screenshots, previews, sprites, phash frames, markers), raw HTTP range serving. |
 
@@ -54,6 +54,20 @@ Base commit: upstream `4de2351` (branch `microservices`).
 * `stash-fsd` only allows access below its configured `roots`.
 
 ### Database
+**Status: SQLite is kept for now** (decision 2026-10-24). SQLite allows one
+writer at a time and Stash serialises writes through a single connection per
+process, so exactly one process owns the database file: the `api` container,
+which also hosts the scheduler. Most of the plugin-induced load is addressed
+by caching, request coalescing and asynchronous hooks, which do not depend on
+the database engine. The only SQLite tuning knob Stash reads is
+`STASH_SQLITE_CACHE_SIZE` (WAL and `synchronous=NORMAL` are already defaults).
+
+Databases already rewritten for native Windows Stash store backslash paths
+(`U:\Media\x.mp4`, `\\NAS\share\x`); adopting one only needs `\` → `/`.
+
+The PostgreSQL port below is **deferred** until measurements show the
+database is still the bottleneck:
+
 * PostgreSQL with a single fresh baseline schema equivalent to SQLite schema
   v85, followed by normal incremental migrations.
 * SQLite-only features are replaced: `regexp` → `~*`/`~`, `phash_distance` →
@@ -129,7 +143,7 @@ docs/architecture/       this document and per-component notes
 | Phase | Content | Gate |
 |---|---|---|
 | P0 | Toolchain harness, this document, proto contract | `scripts/dev/build.sh` passes |
-| P1 | PostgreSQL port of the data layer | existing `integration` test suite passes against PostgreSQL |
+| P1 | PostgreSQL port of the data layer (**deferred**, SQLite kept for now) | existing `integration` test suite passes against PostgreSQL |
 | P2 | `stash-fsd` filesystem + hashing, `pkg/remotefs`, scanner on top of it | library scan from Docker |
 | P3 | ffmpeg on Windows (probe, screenshots, previews, sprites, phash, markers), direct streaming via gateway | generate + play |
 | P4 | Durable job queue + worker/scheduler, async hooks | jobs API unchanged, hooks async |

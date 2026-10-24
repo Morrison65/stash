@@ -56,7 +56,7 @@ func NewMover(fileStore models.FileFinderUpdater, folderStore models.FolderReade
 		Folders: folderStore,
 		Renamer: &folderCreatorStatRenamerImpl{
 			renamerRemoverImpl: newRenamerRemoverImpl(),
-			mkDirFn:            os.Mkdir,
+			mkDirFn:            Library().Mkdir,
 		},
 		rootPaths: rootPaths,
 	}

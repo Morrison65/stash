@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/stashapp/stash/pkg/ffmpeg"
-	"github.com/stashapp/stash/pkg/file"
 	"github.com/stashapp/stash/pkg/models"
 )
 
@@ -21,9 +20,10 @@ func (d *Decorator) Decorate(ctx context.Context, fs models.FS, f models.File) (
 	}
 
 	base := f.Base()
-	// TODO - copy to temp file if not an OsFS
-	if _, isOs := fs.(*file.OsFS); !isOs {
-		return f, fmt.Errorf("video.constructFile: only OsFS is supported")
+	// ffprobe runs where the library lives (locally or on stash-fsd) and
+	// cannot read entries inside zip files
+	if _, isZip := fs.(models.ZipFS); isZip {
+		return f, fmt.Errorf("video.constructFile: video files inside zip files are not supported")
 	}
 
 	probe := d.FFProbe

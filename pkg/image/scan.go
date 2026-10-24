@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/stashapp/stash/pkg/file"
 	"github.com/stashapp/stash/pkg/logger"
 	"github.com/stashapp/stash/pkg/models"
 	"github.com/stashapp/stash/pkg/models/paths"
@@ -372,13 +373,13 @@ func (h *ScanHandler) getOrCreateGallery(ctx context.Context, f models.File) (*m
 	folderPath := filepath.Dir(f.Base().Path)
 
 	forceGallery := false
-	if _, err := os.Stat(filepath.Join(folderPath, ".forcegallery")); err == nil {
+	if _, err := file.Library().Stat(filepath.Join(folderPath, ".forcegallery")); err == nil {
 		forceGallery = true
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("Could not test Path %s: %w", folderPath, err)
 	}
 	exemptGallery := false
-	if _, err := os.Stat(filepath.Join(folderPath, ".nogallery")); err == nil {
+	if _, err := file.Library().Stat(filepath.Join(folderPath, ".nogallery")); err == nil {
 		exemptGallery = true
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("Could not test Path %s: %w", folderPath, err)

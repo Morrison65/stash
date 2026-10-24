@@ -228,7 +228,7 @@ func (f *StashIgnoreFilter) getOrLoadIgnoreEntry(dir string) *ignoreEntry {
 
 // loadIgnoreFile loads and compiles a .stashignore file.
 func (f *StashIgnoreFilter) loadIgnoreFile(path string) (*ignore.GitIgnore, error) {
-	data, err := os.ReadFile(path)
+	data, err := Library().ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

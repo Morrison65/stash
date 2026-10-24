@@ -2,6 +2,7 @@ package ffmpeg
 
 import (
 	"bytes"
+	"io"
 	"os"
 )
 
@@ -36,12 +37,18 @@ func containsMatroskaSignature(buf, subType []byte) bool {
 	return buf[index-3] == 0x42 && buf[index-2] == 0x82
 }
 
+// OpenMediaFile opens a media file for content sniffing. It is replaced at
+// startup so that library files are read through the library file system.
+var OpenMediaFile = func(path string) (io.ReadCloser, error) {
+	return os.Open(path)
+}
+
 // magicContainer returns the container type of a file path.
 // Returns the zero-value on errors or no-match. Implements mkv or
 // webm only, as ffprobe can't distinguish between them and not all
 // browsers support mkv
 func magicContainer(filePath string) (Container, error) {
-	file, err := os.Open(filePath)
+	file, err := OpenMediaFile(filePath)
 	if err != nil {
 		return "", err
 	}
