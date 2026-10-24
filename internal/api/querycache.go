@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"regexp"
 	"strconv"
 	"sync"
 	"time"
@@ -122,7 +123,9 @@ func (c *queryCache) InterceptResponse(ctx context.Context, next graphql.Respons
 		return resp
 	}
 
+	produced := false
 	v, _, _ := c.flight.Do(key+"@"+strconv.FormatUint(gen, 10), func() (any, error) {
+		produced = true
 		resp := next(ctx)
 		if resp != nil && len(resp.Errors) == 0 && len(resp.Data) <= c.maxBytes {
 			c.put(key, gen, resp)
@@ -131,6 +134,13 @@ func (c *queryCache) InterceptResponse(ctx context.Context, next graphql.Respons
 	})
 
 	resp, _ := v.(*graphql.Response)
+
+	// The shared execution ran with another request's context. If it failed
+	// (e.g. that client disconnected), run the query for this request.
+	if !produced && (resp == nil || len(resp.Errors) > 0) && ctx.Err() == nil {
+		return next(ctx)
+	}
+
 	return cloneResponse(resp)
 }
 
@@ -151,7 +161,38 @@ func cacheableOperation(oc *graphql.OperationContext) bool {
 		}
 	}
 
+	// sort: "random" without a seed picks a new order on every call
+	if unseededRandomSortRE.MatchString(oc.RawQuery) || containsString(oc.Variables, "random") {
+		return false
+	}
+
 	return true
+}
+
+var unseededRandomSortRE = regexp.MustCompile(`sort\s*:\s*"random"`)
+
+// containsString reports whether v (decoded JSON variables) contains the
+// exact string s anywhere.
+func containsString(v any, s string) bool {
+	switch t := v.(type) {
+	case string:
+		return t == s
+	case map[string]any:
+		for _, e := range t {
+			if containsString(e, s) {
+				return true
+			}
+		}
+	case []any:
+		for _, e := range t {
+			if containsString(e, s) {
+				return true
+			}
+		}
+	case *string:
+		return t != nil && *t == s
+	}
+	return false
 }
 
 func cacheKey(ctx context.Context, oc *graphql.OperationContext) (string, bool) {
@@ -164,6 +205,10 @@ func cacheKey(ctx context.Context, oc *graphql.OperationContext) (string, bool) 
 	if uid := session.GetCurrentUserID(ctx); uid != nil {
 		h.Write([]byte(*uid))
 	}
+	h.Write([]byte{0})
+	// responses contain absolute URLs built from the request's host
+	baseURL, _ := ctx.Value(BaseURLCtxKey).(string)
+	h.Write([]byte(baseURL))
 	h.Write([]byte{0})
 	h.Write([]byte(oc.OperationName))
 	h.Write([]byte{0})

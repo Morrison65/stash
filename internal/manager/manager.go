@@ -410,6 +410,20 @@ func (s *Manager) Shutdown() {
 		logger.Errorf("Error closing database: %s", err)
 	}
 
+	// give queued asynchronous plugin hooks a chance to finish
+	if s.PluginCache != nil {
+		done := make(chan struct{})
+		go func() {
+			s.PluginCache.WaitForAsyncHooks()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			logger.Warn("shutting down with plugin hooks still running")
+		}
+	}
+
 	if s.FsdClient != nil {
 		_ = s.FsdClient.Close()
 	}
