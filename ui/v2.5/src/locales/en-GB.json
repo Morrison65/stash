@@ -643,7 +643,24 @@
         "whitespace_chars": "Whitespace characters",
         "whitespace_chars_desc": "These characters will be replaced with whitespace in the title"
       },
-      "scene_tools": "Scene Tools"
+      "scene_tools": "Scene Tools",
+      "troubleshooting": {
+        "heading": "Troubleshooting",
+        "ui_config": {
+          "last_updated": "Last updated: {time}",
+          "load_from_server": "Load UI configuration from server",
+          "load_from_server_confirm": "This replaces the UI configuration stored in this browser with the copy stored on the server. Changes not synced to the server will be lost. The page will reload afterwards. Continue?",
+          "load_from_server_desc": "Replaces the UI configuration stored in this browser with the server's copy.",
+          "mode_in_page": "Stored in this browser (IndexedDB, in-page fallback - service worker not active). Plugins using raw requests see the server's copy.",
+          "mode_service_worker": "Stored in this browser (IndexedDB, service worker active).",
+          "mode_unavailable": "Browser storage unavailable - the UI configuration is stored on the server.",
+          "never": "never",
+          "storage": "UI configuration storage",
+          "sync_success": "UI configuration synced to server",
+          "sync_to_server": "Sync UI configuration to server",
+          "sync_to_server_desc": "The UI configuration is kept in this browser. Sends a copy to the server, e.g. as a backup or to use it in another browser."
+        }
+      }
     },
     "ui": {
       "abbreviate_counters": {
