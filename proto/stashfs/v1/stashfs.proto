@@ -1,0 +1,288 @@
+// Contract between the Stash containers (Go, Linux) and stash-fsd, the
+// Windows service that owns all access to the media library.
+//
+// Paths
+//   All paths are Windows paths written with forward slashes, e.g.
+//   "U:/Media/clip.mp4" or "//nas/share/clip.mp4". stash-fsd converts to the
+//   native form at its boundary and rejects paths outside its configured
+//   roots with PERMISSION_DENIED.
+//
+// Errors
+//   NOT_FOUND          path does not exist           (Go: fs.ErrNotExist)
+//   PERMISSION_DENIED  outside roots / access denied (Go: fs.ErrPermission)
+//   ALREADY_EXISTS     destination exists            (Go: fs.ErrExist)
+//   FAILED_PRECONDITION e.g. not a directory, directory not empty
+//   UNAUTHENTICATED    missing/invalid bearer token
+//
+// Authentication
+//   Every call carries "authorization: Bearer <shared secret>" metadata.
+syntax = "proto3";
+
+package stashfs.v1;
+
+option go_package = "github.com/stashapp/stash/pkg/remotefs/stashfsv1;stashfsv1";
+
+// ---------------------------------------------------------------------------
+// Common messages
+// ---------------------------------------------------------------------------
+
+message PathRequest {
+  string path = 1;
+}
+
+message PathResponse {
+  string path = 1;
+}
+
+message BoolResponse {
+  bool value = 1;
+}
+
+message Empty {}
+
+message FileInfo {
+  // Base name of the entry.
+  string name = 1;
+  // Full path (forward-slash Windows form).
+  string path = 2;
+  int64 size = 3;
+  // Go fs.FileMode bits (permission bits plus ModeDir / ModeSymlink).
+  uint32 mode = 4;
+  // Modification time, unix nanoseconds.
+  int64 mod_time_unix_nano = 5;
+  bool is_dir = 6;
+  bool is_symlink = 7;
+}
+
+// ---------------------------------------------------------------------------
+// FileSystem: metadata, reads and mutations
+// ---------------------------------------------------------------------------
+
+service FileSystem {
+  // Stat follows symlinks.
+  rpc Stat(PathRequest) returns (FileInfo);
+  // Lstat does not follow symlinks.
+  rpc Lstat(PathRequest) returns (FileInfo);
+  // ReadDir returns the entries of a directory sorted by name. Entry infos
+  // are lstat results (symlinks are reported, not followed).
+  rpc ReadDir(PathRequest) returns (ReadDirResponse);
+  // Walk streams a whole directory tree in batches, depth first, entries of
+  // each directory sorted by name (the same order as Go's filepath.Walk).
+  // The root itself is the first entry.
+  rpc Walk(WalkRequest) returns (stream WalkBatch);
+  rpc EvalSymlinks(PathRequest) returns (PathResponse);
+  rpc IsPathCaseSensitive(PathRequest) returns (BoolResponse);
+
+  // Random access read. Returns fewer bytes than requested only at EOF.
+  rpc ReadAt(ReadAtRequest) returns (ReadAtResponse);
+  // Streams a file (or a byte range of it) in chunks.
+  rpc ReadFile(ReadFileRequest) returns (stream DataChunk);
+
+  // Mkdir creates a directory; with all=true it creates parents too and
+  // succeeds if the directory already exists.
+  rpc Mkdir(MkdirRequest) returns (Empty);
+  // Rename moves a file or directory. If the destination is on a different
+  // volume the data is copied (preserving modification time) and the source
+  // removed, matching fsutil.SafeMove.
+  rpc Rename(RenameRequest) returns (Empty);
+  rpc Remove(PathRequest) returns (Empty);
+  rpc RemoveAll(PathRequest) returns (Empty);
+  // MoveToTrash moves path into trash_dir (appending a numeric suffix on
+  // collision) and returns the new location.
+  rpc MoveToTrash(TrashRequest) returns (PathResponse);
+}
+
+message ReadDirResponse {
+  repeated FileInfo entries = 1;
+}
+
+message WalkRequest {
+  string root = 1;
+  // Follow directory symlinks (with loop detection).
+  bool follow_symlinks = 2;
+  // Maximum entries per streamed batch; server default when 0.
+  uint32 batch_size = 3;
+}
+
+message WalkBatch {
+  repeated FileInfo entries = 1;
+  // Errors for entries that could not be read; walking continues.
+  repeated WalkError errors = 2;
+}
+
+message WalkError {
+  string path = 1;
+  string message = 2;
+  // gRPC status code that the error would map to.
+  int32 code = 3;
+}
+
+message ReadAtRequest {
+  string path = 1;
+  int64 offset = 2;
+  // Maximum 8 MiB per call.
+  int32 length = 3;
+}
+
+message ReadAtResponse {
+  bytes data = 1;
+  bool eof = 2;
+}
+
+message ReadFileRequest {
+  string path = 1;
+  int64 offset = 2;
+  // 0 = until EOF.
+  int64 length = 3;
+  // Refuse with FAILED_PRECONDITION if the file is larger (0 = no limit).
+  int64 max_size = 4;
+}
+
+message DataChunk {
+  bytes data = 1;
+}
+
+message MkdirRequest {
+  string path = 1;
+  bool all = 2;
+}
+
+message RenameRequest {
+  string old_path = 1;
+  string new_path = 2;
+}
+
+message TrashRequest {
+  string path = 1;
+  string trash_dir = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Hasher: I/O-bound fingerprints computed next to the data
+// ---------------------------------------------------------------------------
+
+service Hasher {
+  rpc Fingerprint(FingerprintRequest) returns (FingerprintResponse);
+}
+
+enum HashAlgorithm {
+  HASH_ALGORITHM_UNSPECIFIED = 0;
+  HASH_ALGORITHM_MD5 = 1;
+  // OpenSubtitles hash: size + 64-bit sums of the first and last 64 KiB.
+  HASH_ALGORITHM_OSHASH = 2;
+}
+
+message FingerprintRequest {
+  string path = 1;
+  // If set, path is a zip archive and the fingerprint is computed for this
+  // entry (forward-slash path relative to the archive root).
+  string zip_entry = 2;
+  repeated HashAlgorithm algorithms = 3;
+}
+
+message FingerprintResponse {
+  // Lower-case hex.
+  string md5 = 1;
+  // 16 lower-case hex characters, as produced by pkg/hash/oshash.
+  string oshash = 2;
+  int64 size = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Media: ffprobe / ffmpeg executed on Windows
+// ---------------------------------------------------------------------------
+
+service Media {
+  rpc Capabilities(Empty) returns (CapabilitiesResponse);
+  // Runs ffprobe and returns its raw JSON output together with file stats.
+  rpc Probe(ProbeRequest) returns (ProbeResponse);
+  // Runs ffmpeg or ffprobe. Placeholders in args are substituted:
+  //   {input:N}     native form of inputs[N] (validated against roots)
+  //   {workspace}   native path of the request's workspace directory
+  // Output is streamed: stdout chunks, then exactly one final status message.
+  rpc Run(RunRequest) returns (stream RunOutput);
+  // Streams a file from a workspace back to the caller.
+  rpc FetchWorkspaceFile(WorkspaceFileRequest) returns (stream DataChunk);
+  rpc ListWorkspace(WorkspaceRequest) returns (ListWorkspaceResponse);
+  rpc DeleteWorkspace(WorkspaceRequest) returns (Empty);
+}
+
+message CapabilitiesResponse {
+  string service_version = 1;
+  string ffmpeg_version = 2;
+  string ffprobe_version = 3;
+  repeated string hardware_codecs = 4;
+  repeated string roots = 5;
+  int32 max_concurrent_ffmpeg = 6;
+  int32 max_concurrent_hash = 7;
+}
+
+message ProbeRequest {
+  string path = 1;
+  // Extra ffprobe arguments inserted before the input (e.g. -count_frames).
+  repeated string extra_args = 2;
+}
+
+message ProbeResponse {
+  // stdout of: ffprobe -v quiet -print_format json -show_format -show_streams
+  //            -show_error <extra_args> <path>
+  bytes json = 1;
+  int64 size = 2;
+  int64 mod_time_unix_nano = 3;
+}
+
+enum Tool {
+  TOOL_UNSPECIFIED = 0;
+  TOOL_FFMPEG = 1;
+  TOOL_FFPROBE = 2;
+}
+
+message RunRequest {
+  Tool tool = 1;
+  repeated string args = 2;
+  repeated string inputs = 3;
+  // Optional data piped to stdin.
+  bytes stdin = 4;
+  // Workspace id (created on first use, [A-Za-z0-9_-]{1,64}). Empty = none.
+  string workspace = 5;
+  // Kill the process after this many seconds (0 = server default).
+  int32 timeout_seconds = 6;
+  // Scheduling class used for server-side concurrency limits.
+  Priority priority = 7;
+}
+
+enum Priority {
+  PRIORITY_UNSPECIFIED = 0;
+  // Interactive (a user is waiting), e.g. on-demand thumbnail.
+  PRIORITY_INTERACTIVE = 1;
+  PRIORITY_NORMAL = 2;
+  PRIORITY_BACKGROUND = 3;
+}
+
+message RunOutput {
+  oneof payload {
+    bytes stdout = 1;
+    RunStatus status = 2;
+  }
+}
+
+message RunStatus {
+  int32 exit_code = 1;
+  // Last 64 KiB of stderr.
+  string stderr = 2;
+  bool timed_out = 3;
+}
+
+message WorkspaceRequest {
+  string workspace = 1;
+}
+
+message WorkspaceFileRequest {
+  string workspace = 1;
+  // Relative file name inside the workspace.
+  string name = 2;
+}
+
+message ListWorkspaceResponse {
+  repeated FileInfo entries = 1;
+}
