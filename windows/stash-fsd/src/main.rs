@@ -71,6 +71,14 @@ enum Cmd {
         #[arg(long, default_value_t = 3600)]
         ttl: u64,
     },
+    /// Print md5 and oshash of a local file or zip entry (no roots check).
+    Hash {
+        /// File path (native or forward-slash form).
+        file: PathBuf,
+        /// Optional zip entry inside the file.
+        #[arg(long, default_value = "")]
+        zip: String,
+    },
     /// Service entrypoint used by the Windows service manager.
     #[command(hide = true)]
     Service {
@@ -116,6 +124,16 @@ fn dispatch(cmd: Cmd) -> Result<()> {
             cfg.validate()?;
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
             println!("/raw?{}", http::signed_query(cfg.server.shared_secret.trim(), &path, &zip, now + ttl));
+            Ok(())
+        }
+        Cmd::Hash { file, zip } => {
+            let abs = std::path::absolute(&file)?;
+            let wp = paths::WirePath::parse(&paths::native_to_wire(&abs)).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let md5 = fs_service::fingerprint_blocking(&wp, &zip, true, false).map_err(|s| anyhow::anyhow!("{}", s.message()))?;
+            let oshash = fs_service::fingerprint_blocking(&wp, &zip, false, true)
+                .map(|r| r.oshash)
+                .unwrap_or_else(|s| format!("error: {}", s.message()));
+            println!("size={} md5={} oshash={}", md5.size, md5.md5, oshash);
             Ok(())
         }
         #[cfg(windows)]
