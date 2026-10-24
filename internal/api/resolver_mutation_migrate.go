@@ -6,6 +6,7 @@ import (
 
 	"github.com/stashapp/stash/internal/manager"
 	"github.com/stashapp/stash/internal/manager/task"
+	"github.com/stashapp/stash/pkg/job"
 	"github.com/stashapp/stash/pkg/scene"
 	"github.com/stashapp/stash/pkg/utils"
 )
@@ -21,7 +22,7 @@ func (r *mutationResolver) MigrateSceneScreenshots(ctx context.Context, input Mi
 		SceneRepo:  mgr.Repository.Scene,
 		TxnManager: mgr.Repository.TxnManager,
 	}
-	jobID := mgr.JobManager.Add(ctx, "Migrating scene screenshots to blobs...", t)
+	jobID := mgr.JobManager.AddInLane(ctx, job.LaneExclusive, "Migrating scene screenshots to blobs...", t)
 
 	return strconv.Itoa(jobID), nil
 }
@@ -34,7 +35,7 @@ func (r *mutationResolver) MigrateBlobs(ctx context.Context, input MigrateBlobsI
 		Vacuumer:   mgr.Database,
 		DeleteOld:  utils.IsTrue(input.DeleteOld),
 	}
-	jobID := mgr.JobManager.Add(ctx, "Migrating blobs...", t)
+	jobID := mgr.JobManager.AddInLane(ctx, job.LaneExclusive, "Migrating blobs...", t)
 
 	return strconv.Itoa(jobID), nil
 }
@@ -51,7 +52,7 @@ func (r *mutationResolver) Migrate(ctx context.Context, input manager.MigrateInp
 		return "", err
 	}
 
-	jobID := mgr.JobManager.Add(ctx, "Migrating database...", t)
+	jobID := mgr.JobManager.AddInLane(ctx, job.LaneExclusive, "Migrating database...", t)
 
 	return strconv.Itoa(jobID), nil
 }

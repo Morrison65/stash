@@ -330,7 +330,10 @@ func TestSubscribe(t *testing.T) {
 	exec2 := newTestExec(make(chan struct{}))
 	jobID = m.Add(context.Background(), jobName, exec2)
 
+	// jobs start as soon as their lane is free, so the cancelled job is
+	// stopping and is removed once its exec returns
 	m.CancelJob(jobID)
+	close(exec2.finish)
 
 	select {
 	case removedJob := <-s.RemovedJob:

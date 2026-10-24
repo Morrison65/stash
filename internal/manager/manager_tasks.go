@@ -155,7 +155,7 @@ func (s *Manager) Scan(ctx context.Context, input ScanMetadataInput) (int, error
 		subscriptions: s.scanSubs,
 	}
 
-	return s.JobManager.Add(ctx, "Scanning...", &scanJob), nil
+	return s.JobManager.AddInLane(ctx, job.LaneLibrary, "Scanning...", &scanJob), nil
 }
 
 func (s *Manager) Import(ctx context.Context) (int, error) {
@@ -181,7 +181,7 @@ func (s *Manager) Import(ctx context.Context) (int, error) {
 		return nil
 	})
 
-	return s.JobManager.Add(ctx, "Importing...", j), nil
+	return s.JobManager.AddInLane(ctx, job.LaneExclusive, "Importing...", j), nil
 }
 
 func (s *Manager) Export(ctx context.Context) (int, error) {
@@ -204,7 +204,7 @@ func (s *Manager) Export(ctx context.Context) (int, error) {
 		return nil
 	})
 
-	return s.JobManager.Add(ctx, "Exporting...", j), nil
+	return s.JobManager.AddInLane(ctx, job.LaneSystem, "Exporting...", j), nil
 }
 
 func (s *Manager) RunSingleTask(ctx context.Context, t Task) int {
@@ -234,7 +234,7 @@ func (s *Manager) Generate(ctx context.Context, input GenerateMetadataInput) (in
 		input:      input,
 	}
 
-	return s.JobManager.Add(ctx, "Generating...", j), nil
+	return s.JobManager.AddInLane(ctx, job.LaneLibrary, "Generating...", j), nil
 }
 
 func (s *Manager) GenerateDefaultScreenshot(ctx context.Context, sceneId string) int {
@@ -287,7 +287,7 @@ func (s *Manager) generateScreenshot(ctx context.Context, sceneId string, at *fl
 		return nil
 	})
 
-	return s.JobManager.Add(ctx, fmt.Sprintf("Generating screenshot for scene id %s", sceneId), j)
+	return s.JobManager.AddInLane(ctx, job.LaneLibrary, fmt.Sprintf("Generating screenshot for scene id %s", sceneId), j)
 }
 
 type AutoTagMetadataInput struct {
@@ -307,7 +307,7 @@ func (s *Manager) AutoTag(ctx context.Context, input AutoTagMetadataInput) int {
 		input:      input,
 	}
 
-	return s.JobManager.Add(ctx, "Auto-tagging...", &j)
+	return s.JobManager.AddInLane(ctx, job.LaneMetadata, "Auto-tagging...", &j)
 }
 
 type CleanMetadataInput struct {
@@ -337,7 +337,7 @@ func (s *Manager) Clean(ctx context.Context, input CleanMetadataInput) int {
 		scanSubs:     s.scanSubs,
 	}
 
-	return s.JobManager.Add(ctx, "Cleaning...", &j)
+	return s.JobManager.AddInLane(ctx, job.LaneLibrary, "Cleaning...", &j)
 }
 
 func (s *Manager) OptimiseDatabase(ctx context.Context) int {
@@ -345,7 +345,7 @@ func (s *Manager) OptimiseDatabase(ctx context.Context) int {
 		Optimiser: s.Database,
 	}
 
-	return s.JobManager.Add(ctx, "Optimising database...", &j)
+	return s.JobManager.AddInLane(ctx, job.LaneExclusive, "Optimising database...", &j)
 }
 
 func (s *Manager) MigrateHash(ctx context.Context) int {
@@ -393,7 +393,7 @@ func (s *Manager) MigrateHash(ctx context.Context) int {
 		return nil
 	})
 
-	return s.JobManager.Add(ctx, "Migrating scene hashes...", j)
+	return s.JobManager.AddInLane(ctx, job.LaneLibrary, "Migrating scene hashes...", j)
 }
 
 // batchTagType indicates which batch tagging mode to use
@@ -593,7 +593,7 @@ func (s *Manager) StashBoxBatchPerformerTag(ctx context.Context, box *models.Sta
 		return nil
 	})
 
-	return s.JobManager.Add(ctx, "Batch stash-box performer tag...", j)
+	return s.JobManager.AddInLane(ctx, job.LaneMetadata, "Batch stash-box performer tag...", j)
 }
 
 func (s *Manager) batchTagStudiosByIds(ctx context.Context, input StashBoxBatchTagInput, box *models.StashBox) ([]Task, error) {
@@ -727,7 +727,7 @@ func (s *Manager) StashBoxBatchStudioTag(ctx context.Context, box *models.StashB
 		return nil
 	})
 
-	return s.JobManager.Add(ctx, "Batch stash-box studio tag...", j)
+	return s.JobManager.AddInLane(ctx, job.LaneMetadata, "Batch stash-box studio tag...", j)
 }
 
 func (s *Manager) batchTagTagsByIds(ctx context.Context, input StashBoxBatchTagInput, box *models.StashBox) ([]Task, error) {
@@ -861,5 +861,5 @@ func (s *Manager) StashBoxBatchTagTag(ctx context.Context, box *models.StashBox,
 		return nil
 	})
 
-	return s.JobManager.Add(ctx, "Batch stash-box tag tag...", j)
+	return s.JobManager.AddInLane(ctx, job.LaneMetadata, "Batch stash-box tag tag...", j)
 }

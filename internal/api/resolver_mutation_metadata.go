@@ -11,6 +11,7 @@ import (
 	"github.com/stashapp/stash/internal/manager"
 	"github.com/stashapp/stash/internal/manager/config"
 	"github.com/stashapp/stash/internal/manager/task"
+	"github.com/stashapp/stash/pkg/job"
 	"github.com/stashapp/stash/pkg/logger"
 )
 
@@ -89,7 +90,7 @@ func (r *mutationResolver) MetadataAutoTag(ctx context.Context, input manager.Au
 
 func (r *mutationResolver) MetadataIdentify(ctx context.Context, input identify.Options) (string, error) {
 	t := manager.CreateIdentifyJob(input)
-	jobID := manager.GetInstance().JobManager.Add(ctx, "Identifying...", t)
+	jobID := manager.GetInstance().JobManager.AddInLane(ctx, job.LaneMetadata, "Identifying...", t)
 
 	return strconv.Itoa(jobID), nil
 }
@@ -109,7 +110,7 @@ func (r *mutationResolver) MetadataCleanGenerated(ctx context.Context, input tas
 		Repository:               mgr.Repository,
 		BlobCleaner:              mgr.Repository.Blob,
 	}
-	jobID := mgr.JobManager.Add(ctx, "Cleaning generated files...", t)
+	jobID := mgr.JobManager.AddInLane(ctx, job.LaneLibrary, "Cleaning generated files...", t)
 
 	return strconv.Itoa(jobID), nil
 }

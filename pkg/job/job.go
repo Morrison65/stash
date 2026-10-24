@@ -64,6 +64,11 @@ type Job struct {
 	outerCtx   context.Context
 	exec       JobExec
 	cancelFunc context.CancelFunc
+
+	// lane decides which jobs may run concurrently (see Lane)
+	lane Lane
+	// immediate jobs (Manager.Start) run regardless of their lane
+	immediate bool
 }
 
 // statusCopy returns a copy of the Job with only the fields needed for

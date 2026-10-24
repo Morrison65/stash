@@ -67,5 +67,5 @@ func (s *Manager) RunPluginTask(
 	if description != nil {
 		displayName = *description
 	}
-	return s.JobManager.Add(ctx, fmt.Sprintf("Running plugin task: %s", displayName), j)
+	return s.JobManager.AddInLane(ctx, job.LanePlugin, fmt.Sprintf("Running plugin task: %s", displayName), j)
 }

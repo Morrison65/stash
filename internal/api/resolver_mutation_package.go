@@ -6,6 +6,7 @@ import (
 
 	"github.com/stashapp/stash/internal/manager"
 	"github.com/stashapp/stash/internal/manager/task"
+	"github.com/stashapp/stash/pkg/job"
 	"github.com/stashapp/stash/pkg/models"
 )
 
@@ -33,7 +34,7 @@ func (r *mutationResolver) InstallPackages(ctx context.Context, typeArg PackageT
 		},
 		Packages: packages,
 	}
-	jobID := mgr.JobManager.Add(ctx, "Installing packages...", t)
+	jobID := mgr.JobManager.AddInLane(ctx, job.LaneSystem, "Installing packages...", t)
 
 	return strconv.Itoa(jobID), nil
 }
@@ -52,7 +53,7 @@ func (r *mutationResolver) UpdatePackages(ctx context.Context, typeArg PackageTy
 		},
 		Packages: packages,
 	}
-	jobID := mgr.JobManager.Add(ctx, "Updating packages...", t)
+	jobID := mgr.JobManager.AddInLane(ctx, job.LaneSystem, "Updating packages...", t)
 
 	return strconv.Itoa(jobID), nil
 }
@@ -71,7 +72,7 @@ func (r *mutationResolver) UninstallPackages(ctx context.Context, typeArg Packag
 		},
 		Packages: packages,
 	}
-	jobID := mgr.JobManager.Add(ctx, "Updating packages...", t)
+	jobID := mgr.JobManager.AddInLane(ctx, job.LaneSystem, "Updating packages...", t)
 
 	return strconv.Itoa(jobID), nil
 }

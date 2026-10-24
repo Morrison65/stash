@@ -13,14 +13,37 @@ import (
 const maxGraveyardSize = 10
 const defaultThrottleLimit = 100 * time.Millisecond
 
-// Manager maintains a queue of jobs. Jobs are executed one at a time.
+// Lane groups jobs that compete for the same resource. Jobs in one lane run
+// one at a time in the order they were added; different lanes run
+// concurrently, so e.g. an identify job does not wait for a long library
+// scan. Jobs in LaneExclusive need the whole system: they start when nothing
+// else is running and nothing queued behind them starts before they finish.
+type Lane string
+
+const (
+	// LaneDefault is used by Add for jobs that have not been classified.
+	LaneDefault Lane = "default"
+	// LaneLibrary: jobs bound by media library access (stash-fsd, ffmpeg):
+	// scan, clean, generate.
+	LaneLibrary Lane = "library"
+	// LaneMetadata: jobs bound by the database and metadata sources:
+	// identify, auto tag, stash-box batch tagging.
+	LaneMetadata Lane = "metadata"
+	// LanePlugin: plugin tasks.
+	LanePlugin Lane = "plugin"
+	// LaneSystem: package installation, ffmpeg download, export.
+	LaneSystem Lane = "system"
+	// LaneExclusive: database migrations, optimisation, import.
+	LaneExclusive Lane = "exclusive"
+)
+
+// Manager maintains a queue of jobs, scheduled per Lane.
 type Manager struct {
 	queue     []*Job
 	graveyard []*Job
 
-	mutex    sync.Mutex
-	notEmpty *sync.Cond
-	stop     chan struct{}
+	mutex sync.Mutex
+	stop  chan struct{}
 
 	lastID int
 
@@ -35,10 +58,6 @@ func NewManager() *Manager {
 		updateThrottleLimit: defaultThrottleLimit,
 	}
 
-	ret.notEmpty = sync.NewCond(&ret.mutex)
-
-	go ret.dispatcher()
-
 	return ret
 }
 
@@ -49,8 +68,13 @@ func (m *Manager) Stop() {
 	close(m.stop)
 }
 
-// Add queues a job.
+// Add queues a job in LaneDefault.
 func (m *Manager) Add(ctx context.Context, description string, e JobExec) int {
+	return m.AddInLane(ctx, LaneDefault, description, e)
+}
+
+// AddInLane queues a job in the given lane.
+func (m *Manager) AddInLane(ctx context.Context, lane Lane, description string, e JobExec) int {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -63,16 +87,14 @@ func (m *Manager) Add(ctx context.Context, description string, e JobExec) int {
 		AddTime:     t,
 		exec:        e,
 		outerCtx:    ctx,
+		lane:        lane,
 	}
 
 	m.queue = append(m.queue, &j)
 
-	if len(m.queue) == 1 {
-		// notify that there is now a job in the queue
-		m.notEmpty.Broadcast()
-	}
-
 	m.notifyNewJob(&j)
+
+	m.schedule()
 
 	return j.ID
 }
@@ -92,6 +114,7 @@ func (m *Manager) Start(ctx context.Context, description string, e JobExec) int 
 		AddTime:     t,
 		exec:        e,
 		outerCtx:    ctx,
+		immediate:   true,
 	}
 
 	m.queue = append(m.queue, &j)
@@ -117,49 +140,53 @@ func (m *Manager) nextID() int {
 	return m.lastID
 }
 
-func (m *Manager) getReadyJob() *Job {
+// schedule starts every queued job that may run now. It is called whenever
+// a job is added, finishes or is cancelled.
+func (m *Manager) schedule() {
 	// assumes lock held
+	select {
+	case <-m.stop:
+		return
+	default:
+	}
+
+	busyLanes := make(map[Lane]bool)
+	anyRunning := false
+
 	for _, j := range m.queue {
-		if j.Status == StatusReady {
-			return j
+		if j.Status != StatusRunning && j.Status != StatusStopping {
+			continue
+		}
+		anyRunning = true
+		if j.lane == LaneExclusive {
+			// nothing else may start while an exclusive job runs
+			return
+		}
+		if !j.immediate {
+			busyLanes[j.lane] = true
 		}
 	}
 
-	return nil
-}
-
-func (m *Manager) dispatcher() {
-	m.mutex.Lock()
-
-	for {
-		// wait until we have something to process
-		j := m.getReadyJob()
-
-		for j == nil {
-			m.notEmpty.Wait()
-
-			// it's possible that we have been stopped - check here
-			select {
-			case <-m.stop:
-				m.mutex.Unlock()
-				return
-			default:
-				// keep going
-				j = m.getReadyJob()
-			}
+	for _, j := range m.queue {
+		if j.Status != StatusReady {
+			continue
 		}
 
-		done := m.dispatch(j.outerCtx, j)
+		if j.lane == LaneExclusive {
+			if !anyRunning {
+				m.dispatch(j.outerCtx, j)
+			}
+			// jobs queued behind an exclusive job wait for it
+			return
+		}
 
-		// unlock the mutex and wait for the job to finish
-		m.mutex.Unlock()
-		<-done
-		m.mutex.Lock()
+		if busyLanes[j.lane] {
+			continue
+		}
 
-		// remove the job from the queue
-		m.removeJob(j)
-
-		// process next job
+		m.dispatch(j.outerCtx, j)
+		busyLanes[j.lane] = true
+		anyRunning = true
 	}
 }
 
@@ -173,7 +200,7 @@ func (m *Manager) newProgress(j *Job) *Progress {
 	}
 }
 
-func (m *Manager) dispatch(ctx context.Context, j *Job) (done chan struct{}) {
+func (m *Manager) dispatch(ctx context.Context, j *Job) {
 	// assumes lock held
 	t := time.Now()
 	j.StartTime = &t
@@ -183,16 +210,19 @@ func (m *Manager) dispatch(ctx context.Context, j *Job) (done chan struct{}) {
 	ctx, cancelFunc := context.WithCancel(context.WithoutCancel(ctx))
 	j.cancelFunc = cancelFunc
 
-	done = make(chan struct{})
-	go m.executeJob(ctx, j, done)
+	go m.executeJob(ctx, j)
 
 	m.notifyJobUpdate(j)
-
-	return
 }
 
-func (m *Manager) executeJob(ctx context.Context, j *Job, done chan struct{}) {
-	defer close(done)
+func (m *Manager) executeJob(ctx context.Context, j *Job) {
+	defer func() {
+		// remove the job and start whatever may run now
+		m.mutex.Lock()
+		defer m.mutex.Unlock()
+		m.removeJob(j)
+		m.schedule()
+	}()
 	defer m.onJobFinish(j)
 	defer func() {
 		if p := recover(); p != nil {
@@ -286,6 +316,8 @@ func (m *Manager) CancelJob(id int) {
 		if j.Status == StatusCancelled {
 			// remove from the queue
 			m.removeJob(j)
+			// a cancelled exclusive job may have been blocking others
+			m.schedule()
 		}
 	}
 }

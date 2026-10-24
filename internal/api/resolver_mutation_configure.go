@@ -16,6 +16,7 @@ import (
 	"github.com/stashapp/stash/pkg/ffmpeg"
 	"github.com/stashapp/stash/pkg/file"
 	"github.com/stashapp/stash/pkg/fsutil"
+	"github.com/stashapp/stash/pkg/job"
 	"github.com/stashapp/stash/pkg/logger"
 	"github.com/stashapp/stash/pkg/models"
 	"github.com/stashapp/stash/pkg/utils"
@@ -51,7 +52,7 @@ func (r *mutationResolver) DownloadFFMpeg(ctx context.Context) (string, error) {
 		},
 	}
 
-	jobID := mgr.JobManager.Add(ctx, "Downloading ffmpeg...", t)
+	jobID := mgr.JobManager.AddInLane(ctx, job.LaneSystem, "Downloading ffmpeg...", t)
 
 	return strconv.Itoa(jobID), nil
 }
