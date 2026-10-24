@@ -59,6 +59,13 @@ func (s *SceneServer) StreamSceneDirect(scene *models.Scene, w http.ResponseWrit
 	_, filename := filepath.Split(fp)
 	contentDisposition := mime.FormatMediaType("inline", map[string]string{"filename": filename})
 	w.Header().Set("Content-Disposition", contentDisposition)
+
+	// behind the gateway, library files are streamed by nginx directly from
+	// stash-fsd
+	if ServeLibraryFileAccel(w, fp, "") {
+		return
+	}
+
 	// the stream path is either the library file (stash-fsd) or a generated
 	// transcode (container volume); the library file system routes both
 	file.ServeLibraryFile(w, r, fp)

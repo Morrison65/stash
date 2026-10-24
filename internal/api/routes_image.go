@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -129,8 +131,35 @@ func (rs imageRoutes) Image(w http.ResponseWriter, r *http.Request) {
 	rs.serveImage(w, r, i, useDefault)
 }
 
+// serveImageAccel lets the gateway serve an image (also from inside a zip
+// file) straight from stash-fsd.
+func serveImageAccel(w http.ResponseWriter, r *http.Request, f *models.BaseFile) bool {
+	path, entry := f.Path, ""
+	if f.ZipFile != nil {
+		zipPath := f.ZipFile.Base().Path
+		rel, err := filepath.Rel(zipPath, f.Path)
+		if err != nil {
+			return false
+		}
+		path, entry = zipPath, filepath.ToSlash(rel)
+	}
+
+	if r.URL.Query().Has("t") {
+		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`filename="%s"`, f.Basename))
+
+	return manager.ServeLibraryFileAccel(w, path, entry)
+}
+
 func (rs imageRoutes) serveImage(w http.ResponseWriter, r *http.Request, i *models.Image, useDefault bool) {
 	if i.Files.Primary() != nil {
+		if serveImageAccel(w, r, i.Files.Primary().Base()) {
+			return
+		}
+
 		err := i.Files.Primary().Base().Serve(file.Library(), w, r)
 		if err == nil {
 			return

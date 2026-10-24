@@ -146,6 +146,14 @@ func GetSceneStreamPaths(scene *models.Scene, directStreamURL *url.URL, maxStrea
 
 	var endpoints []*SceneStreamEndpoint
 
+	// The container deployment (v1) has no live transcoding: files on
+	// stash-fsd are only streamed directly, unless a generated transcode
+	// exists (which is then served by the direct endpoint).
+	if ffmpeg.IsRemotePath(pf.Path) {
+		endpoints = append(endpoints, makeStreamEndpoint(directEndpointType, ""))
+		return endpoints, nil
+	}
+
 	// direct stream should only apply when the audio codec is supported
 	audioCodec := ffmpeg.MissingUnsupported
 	if pf.AudioCodec != "" {

@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +27,10 @@ const (
 	envFsdSecret    = "STASH_FSD_SECRET"     // shared bearer token
 	envFsdTLS       = "STASH_FSD_TLS"        // "true" to use TLS
 	envFsdTLSVerify = "STASH_FSD_TLS_VERIFY" // "false" to accept self-signed certs
+	// Path prefix of the gateway's internal location that proxies to the
+	// stash-fsd HTTP listener (e.g. "/_fsd"). When set, library files are
+	// served by the gateway via X-Accel-Redirect instead of through Go.
+	envFsdAccelPrefix = "STASH_FSD_ACCEL_PREFIX"
 	// Comma-separated path prefixes that are served by stash-fsd in addition
 	// to Windows paths. Only needed when running the Go reference server
 	// (pkg/remotefs/localserver) against a Linux media folder.
@@ -77,6 +84,15 @@ func initRemoteLibrary() (*remotefs.Client, error) {
 		}
 	}
 
+	if prefix := strings.TrimSuffix(os.Getenv(envFsdAccelPrefix), "/"); prefix != "" {
+		accel = &accelConfig{
+			prefix:   prefix,
+			secret:   os.Getenv(envFsdSecret),
+			isRemote: isRemote,
+		}
+		logger.Infof("Library files are served by the gateway via %s", prefix)
+	}
+
 	file.SetLibrary(&file.RoutingFS{
 		Remote:   remotefs.NewFS(client),
 		Local:    &file.OsFS{},
@@ -100,6 +116,45 @@ func initRemoteLibrary() (*remotefs.Client, error) {
 	}
 
 	return client, nil
+}
+
+// accelConfig enables serving library files through the gateway.
+type accelConfig struct {
+	prefix   string
+	secret   string
+	isRemote func(string) bool
+}
+
+var accel *accelConfig
+
+// accelURLLifetime bounds how long a signed raw URL is valid. Players issue
+// new range requests through the API, which re-signs each time, so this only
+// has to cover a single request.
+const accelURLLifetime = 6 * time.Hour
+
+// ServeLibraryFileAccel asks the gateway to serve a library file straight
+// from stash-fsd (X-Accel-Redirect to a signed raw URL), so video bytes never
+// pass through the API process. zipEntry selects an entry inside the zip file
+// at path. It returns false if acceleration is not configured or path is not
+// a library path; the caller then serves the file itself.
+func ServeLibraryFileAccel(w http.ResponseWriter, path string, zipEntry string) bool {
+	if accel == nil || !accel.isRemote(path) {
+		return false
+	}
+
+	name := path
+	if zipEntry != "" {
+		name = zipEntry
+	}
+	if ct := mime.TypeByExtension(filepath.Ext(name)); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+
+	raw := remotefs.SignRawURL(accel.secret, path, zipEntry, time.Now().Add(accelURLLifetime))
+	w.Header().Set("X-Accel-Redirect", accel.prefix+raw)
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	return true
 }
 
 // fsdRunner adapts remotefs.Client to ffmpeg.RemoteRunner.

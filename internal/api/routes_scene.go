@@ -132,7 +132,23 @@ func (rs sceneRoutes) StreamMKV(w http.ResponseWriter, r *http.Request) {
 	rs.streamTranscode(w, r, ffmpeg.StreamTypeMKV)
 }
 
+// remoteNoTranscode serves the direct stream for scenes on stash-fsd, which
+// has no live transcoding in v1. The transcode routes stay registered so the
+// API surface is unchanged.
+func (rs sceneRoutes) remoteNoTranscode(w http.ResponseWriter, r *http.Request) bool {
+	scene := r.Context().Value(sceneKey).(*models.Scene)
+	if !ffmpeg.IsRemotePath(scene.Path) {
+		return false
+	}
+	rs.StreamDirect(w, r)
+	return true
+}
+
 func (rs sceneRoutes) streamTranscode(w http.ResponseWriter, r *http.Request, streamType ffmpeg.StreamFormat) {
+	if rs.remoteNoTranscode(w, r) {
+		return
+	}
+
 	scene := r.Context().Value(sceneKey).(*models.Scene)
 
 	streamManager := manager.GetInstance().StreamManager
@@ -174,6 +190,10 @@ func (rs sceneRoutes) StreamDASH(w http.ResponseWriter, r *http.Request) {
 }
 
 func (rs sceneRoutes) streamManifest(w http.ResponseWriter, r *http.Request, streamType *ffmpeg.StreamType, logName string) {
+	if rs.remoteNoTranscode(w, r) {
+		return
+	}
+
 	scene := r.Context().Value(sceneKey).(*models.Scene)
 
 	streamManager := manager.GetInstance().StreamManager
@@ -210,6 +230,11 @@ func (rs sceneRoutes) StreamDASHAudioSegment(w http.ResponseWriter, r *http.Requ
 }
 
 func (rs sceneRoutes) streamSegment(w http.ResponseWriter, r *http.Request, streamType *ffmpeg.StreamType) {
+	if scene := r.Context().Value(sceneKey).(*models.Scene); ffmpeg.IsRemotePath(scene.Path) {
+		http.Error(w, "live transcoding is not available for this scene", http.StatusNotFound)
+		return
+	}
+
 	scene := r.Context().Value(sceneKey).(*models.Scene)
 
 	streamManager := manager.GetInstance().StreamManager
