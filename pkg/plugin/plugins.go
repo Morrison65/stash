@@ -107,6 +107,9 @@ type Cache struct {
 
 	// async runs hooks that are not marked sync: in the background
 	async *asyncHookRunner
+
+	// listeners are built-in consumers of post hook events
+	listeners *hookListeners
 }
 
 // NewCache returns a new Cache.
@@ -118,9 +121,16 @@ type Cache struct {
 // loaded explicitly using ReloadPlugins.
 func NewCache(config ServerConfig) *Cache {
 	return &Cache{
-		config: config,
-		async:  newAsyncHookRunner(),
+		config:    config,
+		async:     newAsyncHookRunner(),
+		listeners: &hookListeners{},
 	}
+}
+
+// AddPostHookListener registers fn for every post hook event (whether or not
+// a plugin handles it), e.g. for built-in features that replace plugins.
+func (c *Cache) AddPostHookListener(fn PostHookListener) {
+	c.listeners.add(fn)
 }
 
 // WaitForAsyncHooks blocks until all queued asynchronous hooks have run.
@@ -369,6 +379,8 @@ func waitForTask(ctx context.Context, task Task) error {
 }
 
 func (c Cache) ExecutePostHooks(ctx context.Context, id int, hookType hook.TriggerEnum, input interface{}, inputFields []string) {
+	c.listeners.notify(id, hookType, inputFields)
+
 	if err := c.executePostHooks(ctx, hookType, common.HookContext{
 		ID:          id,
 		Type:        hookType.String(),

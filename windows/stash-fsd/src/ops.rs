@@ -37,22 +37,35 @@ pub fn copy_file(src: &Path, dst: &Path) -> io::Result<()> {
     res
 }
 
-/// Go `fsutil.SafeMove`: rename, falling back to copy + delete for files
-/// (e.g. across volumes). Returns the rename error for directories.
+/// Go `fsutil.SafeMove`: rename, falling back to copy + delete for a file on
+/// another volume. The copy is written to `<dst>.partial` and renamed into
+/// place when complete, so a scan never indexes a half-written file. Other
+/// rename errors (e.g. the file is in use) are returned as they are: copying
+/// a locked file would only fail when deleting the source.
 pub fn safe_move(src: &Path, dst: &Path) -> io::Result<()> {
     let rename_err = match fs::rename(src, dst) {
         Ok(()) => return Ok(()),
         Err(e) => e,
     };
+    if rename_err.kind() != io::ErrorKind::CrossesDevices {
+        return Err(rename_err);
+    }
     let md = fs::symlink_metadata(src)?;
     if !md.is_file() {
         return Err(rename_err);
     }
-    if let Err(e) = copy_file(src, dst) {
+    let partial = partial_path(dst);
+    // left over from an interrupted move
+    let _ = fs::remove_file(&partial);
+    if let Err(e) = copy_file(src, &partial) {
         return Err(io::Error::new(
             e.kind(),
             format!("copying file during SafeMove failed with: '{e}'; renaming file failed previously with: '{rename_err}'"),
         ));
+    }
+    if let Err(e) = fs::rename(&partial, dst) {
+        let _ = fs::remove_file(&partial);
+        return Err(io::Error::new(e.kind(), format!("renaming the copy into place failed with: '{e}'")));
     }
     if let Err(e) = fs::remove_file(src) {
         let _ = fs::remove_file(dst);
@@ -62,6 +75,12 @@ pub fn safe_move(src: &Path, dst: &Path) -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+fn partial_path(dst: &Path) -> std::path::PathBuf {
+    let mut s = dst.as_os_str().to_owned();
+    s.push(".partial");
+    s.into()
 }
 
 /// Go `os.Remove`: removes a file, an empty directory or a symlink.
@@ -200,6 +219,17 @@ mod tests {
         safe_move(&src, &d.path().join("b")).unwrap();
         assert!(!src.exists());
         assert_eq!(fs::read(d.path().join("b")).unwrap(), b"x");
+    }
+
+    #[test]
+    fn safe_move_returns_other_errors_without_copying() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("a");
+        fs::write(&src, b"x").unwrap();
+        let dst = d.path().join("missing").join("b");
+        assert_eq!(safe_move(&src, &dst).unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert!(src.exists());
+        assert!(!partial_path(&dst).exists());
     }
 
     #[test]

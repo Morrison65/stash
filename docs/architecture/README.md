@@ -184,6 +184,7 @@ docs/architecture/       this document and per-component notes
 | P5 | Read-query cache, config split | done (in process); Valkey deferred with P1 |
 | P6 | UI: IndexedDB + service worker for UI config, troubleshooting sync button | done |
 | P7 | Path conversion of an existing database (`cmd/stash-pathfix`) | done |
+| P8 | Rename on update built in, replacing the renamerOnUpdate plugin ([renamer.md](renamer.md)) | done; golden-tested against the plugin |
 | — | DLNA served from Windows | open |
 
 ## Development

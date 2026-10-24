@@ -60,6 +60,10 @@ type Manager struct {
 
 	DLNAService *dlna.Service
 
+	// RenameService renames scene files on update (nil when not enabled in
+	// renamer.yml)
+	RenameService *RenameService
+
 	// FsdClient is the connection to stash-fsd, the Windows service that
 	// owns the media library. Nil when the library is local.
 	FsdClient *remotefs.Client
@@ -402,6 +406,11 @@ func (s *Manager) Shutdown() {
 	if s.StreamManager != nil {
 		s.StreamManager.Shutdown()
 		s.StreamManager = nil
+	}
+
+	// record finished renames while the database is open
+	if s.RenameService != nil {
+		s.RenameService.Stop(15 * time.Second)
 	}
 
 	err := s.Database.Close()

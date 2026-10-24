@@ -24,14 +24,23 @@ NODE_IMAGE="${NODE_IMAGE:-node:24-alpine}"
 DOCKER_TTY=()
 if [ -t 1 ]; then DOCKER_TTY=(-t); fi
 
+# DEV_MOUNT=<host dir> mounts a directory read-only at /mnt/dev, for local
+# test data that must not be in the repository (pkg/renamer golden test).
+DEV_MOUNT_ARGS=()
+if [ -n "${DEV_MOUNT:-}" ]; then
+	DEV_MOUNT_ARGS=(-v "$DEV_MOUNT:/mnt/dev:ro")
+fi
+
 docker_go() {
 	docker run --rm "${DOCKER_TTY[@]}" \
 		--network "${DEV_NETWORK:-bridge}" \
 		-v "$HOST_REPO:/src" \
+		"${DEV_MOUNT_ARGS[@]}" \
 		-v stash-gomod:/go/pkg/mod \
 		-v stash-gocache:/root/.cache/go-build \
 		-e GOFLAGS="${GOFLAGS:-}" \
 		-e STASH_TEST_PG_DSN="${STASH_TEST_PG_DSN:-}" \
+		-e RENAMER_GOLDEN_DIR="${RENAMER_GOLDEN_DIR:-}" \
 		-w /src \
 		"$GO_IMAGE" "$@"
 }
