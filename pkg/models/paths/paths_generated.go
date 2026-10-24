@@ -42,11 +42,21 @@ func (gp *generatedPaths) GetTmpPath(fileName string) string {
 
 // TempFile creates a temporary file using os.CreateTemp.
 // It is the equivalent of calling os.CreateTemp using Tmp and pattern.
+// Generated files are moved into place from these temporary files, so they
+// are made world-readable (os.CreateTemp uses 0600): the gateway serves the
+// generated volume directly as a different user.
 func (gp *generatedPaths) TempFile(pattern string) (*os.File, error) {
 	if err := gp.EnsureTmpDir(); err != nil {
 		logger.Warnf("Could not ensure existence of a temporary directory: %v", err)
 	}
-	return os.CreateTemp(gp.Tmp, pattern)
+	f, err := os.CreateTemp(gp.Tmp, pattern)
+	if err != nil {
+		return nil, err
+	}
+	if err := f.Chmod(0644); err != nil {
+		logger.Warnf("Could not set permissions of %s: %v", f.Name(), err)
+	}
+	return f, nil
 }
 
 func (gp *generatedPaths) EnsureTmpDir() error {
