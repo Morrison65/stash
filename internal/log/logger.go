@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -25,9 +26,11 @@ type Logger struct {
 	mutex          sync.Mutex
 	logCache       []LogItem
 	logSubs        []chan []LogItem
-	waiting        bool
-	lastBroadcast  time.Time
-	logBuffer      []LogItem
+	// subscribers is len(logSubs), readable without the mutex
+	subscribers   atomic.Int32
+	waiting       bool
+	lastBroadcast time.Time
+	logBuffer     []LogItem
 }
 
 func NewLogger() *Logger {
@@ -161,6 +164,7 @@ func (log *Logger) SubscribeToLog(stop chan int) <-chan []LogItem {
 
 	log.mutex.Lock()
 	log.logSubs = append(log.logSubs, ret)
+	log.subscribers.Store(int32(len(log.logSubs)))
 	log.mutex.Unlock()
 
 	return ret
@@ -173,6 +177,7 @@ func (log *Logger) unsubscribeFromLog(toRemove chan []LogItem) {
 			log.logSubs = append(log.logSubs[:i], log.logSubs[i+1:]...)
 		}
 	}
+	log.subscribers.Store(int32(len(log.logSubs)))
 	close(toRemove)
 	log.mutex.Unlock()
 }
@@ -228,7 +233,17 @@ func (log *Logger) Progressf(format string, args ...interface{}) {
 	log.addLogItem(l)
 }
 
+// skip reports whether a message at level can be dropped without any work:
+// the level is not logged and no log viewer (loggingSubscribe) is listening.
+// Every SQL statement is traced, so formatting it for nobody was costly.
+func (log *Logger) skip(level logrus.Level) bool {
+	return !log.logger.IsLevelEnabled(level) && log.subscribers.Load() == 0
+}
+
 func (log *Logger) Trace(args ...interface{}) {
+	if log.skip(logrus.TraceLevel) {
+		return
+	}
 	log.logger.Trace(args...)
 	l := &LogItem{
 		Type:    "trace",
@@ -238,6 +253,9 @@ func (log *Logger) Trace(args ...interface{}) {
 }
 
 func (log *Logger) Tracef(format string, args ...interface{}) {
+	if log.skip(logrus.TraceLevel) {
+		return
+	}
 	log.logger.Tracef(format, args...)
 	l := &LogItem{
 		Type:    "trace",
@@ -254,6 +272,9 @@ func (log *Logger) TraceFunc(fn func() (string, []interface{})) {
 }
 
 func (log *Logger) Debug(args ...interface{}) {
+	if log.skip(logrus.DebugLevel) {
+		return
+	}
 	log.logger.Debug(args...)
 	l := &LogItem{
 		Type:    "debug",
@@ -263,6 +284,9 @@ func (log *Logger) Debug(args ...interface{}) {
 }
 
 func (log *Logger) Debugf(format string, args ...interface{}) {
+	if log.skip(logrus.DebugLevel) {
+		return
+	}
 	log.logger.Debugf(format, args...)
 	l := &LogItem{
 		Type:    "debug",
