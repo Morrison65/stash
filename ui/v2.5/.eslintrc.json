@@ -20,6 +20,14 @@
       "version": "detect"
     }
   },
+  "overrides": [
+    {
+      "files": ["src/**/*.test.ts"],
+      "parserOptions": {
+        "project": "./tsconfig.test.json"
+      }
+    }
+  ],
   "ignorePatterns": [
     "node_modules/",
     "src/core/generated-graphql.ts",
