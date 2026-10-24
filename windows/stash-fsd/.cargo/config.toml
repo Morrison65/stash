@@ -1,0 +1,5 @@
+# Statically link the C runtime pieces (libgcc, winpthreads) for the MinGW
+# target so stash-fsd.exe only depends on DLLs shipped with Windows.
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+rustflags = ["-C", "target-feature=+crt-static"]

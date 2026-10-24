@@ -64,3 +64,7 @@ node_modules
 dist
 .DS_Store
 /.local*
+
+# stash-fsd (Rust) build output
+windows/stash-fsd/target/
+windows/stash-fsd/dist/
