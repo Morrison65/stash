@@ -23,7 +23,7 @@ Base commit: upstream `4de2351` (branch `microservices`).
      │  api (Go)         ── gRPC ──►  stash-fsd        │
      │   └ scheduler     (own worker container later)  │
      │  SQLite volume    ◄── api only (PostgreSQL later)│
-     │  valkey 8         ◄── api (cache, pub/sub)      │
+     │  (valkey 8: added with PostgreSQL + worker)    │
      └────────────────────────────────────────────────┘
                                       stash-fsd.exe (Rust, Windows service)
                                         ├─ gRPC  :7700  filesystem, hashing, ffmpeg
@@ -36,7 +36,7 @@ Base commit: upstream `4de2351` (branch `microservices`).
 | `api` | docker | Go (`stash serve`) | GraphQL, auth, all request handling. Never runs long work inline: enqueues jobs. Runs plugin *operations* and scrapers (Python lives in this image). While the database is SQLite it also hosts the scheduler. |
 | scheduler | inside `api` (own `worker` container once on PostgreSQL) | Go | Durable job queue, priorities, per-resource concurrency limits (fsd I/O, ffmpeg, network, plugins), executes every job including async plugin hooks. Written as a separate component so it can move out. |
 | database | docker volume | SQLite now, PostgreSQL 17 later | See "Database". |
-| `valkey` | docker | Valkey 8 | Global cache (settings, read-query results), pub/sub for job progress, cache invalidation and subscriptions across `api`/`worker`. |
+| `valkey` (planned) | docker | Valkey 8 | Shared cache and pub/sub across `api`/`worker` once there are several processes (with PostgreSQL). Until then the API caches in process. |
 | `stash-fsd` | Windows host | Rust | The only process that touches library files: stat/readdir/walk, random-access reads, move/rename/delete/trash, md5/oshash, ffprobe, ffmpeg (screenshots, previews, sprites, phash frames, markers), raw HTTP range serving. |
 
 ## Key decisions
@@ -102,35 +102,59 @@ database is still the bottleneck:
   phashing; there is no desktop/tray mode).
 
 ### Jobs and scheduling
-* Every job is a row in PostgreSQL (`kind`, JSON `input`, priority, status,
-  progress). Executors are registered per kind; the GraphQL inputs are the
-  payloads. The GraphQL `Job` type, `jobQueue`, `findJob`, `jobsSubscribe`,
-  `stopJob` are byte-for-byte compatible.
-* Long-running mutations that used to block the request (backup, anonymise,
-  stash-box fingerprint submission, plugin hooks) are queued.
-* **Plugin hooks are asynchronous by default.** A plugin can opt a trigger
-  back into synchronous execution by prefixing it with `sync:` in its YAML,
-  e.g. `triggeredBy: [sync:Scene.Update.Post]`.
+* **Implemented:** the job manager (`pkg/job`) schedules per *lane* instead of
+  one global serial queue. A lane runs one job at a time in FIFO order; lanes
+  run concurrently:
+
+  | Lane | Jobs |
+  |---|---|
+  | `library` | scan, clean, generate, clean generated, migrate hash naming |
+  | `metadata` | identify, auto tag, stash-box batch tagging |
+  | `plugin` | plugin tasks |
+  | `system` | package install/update, ffmpeg download, export |
+  | `exclusive` | database migrations, optimise, import, blob migration |
+
+  `exclusive` jobs start only when nothing else runs, and nothing queued
+  behind them starts first. The GraphQL `Job` type, `jobQueue`, `findJob`,
+  `jobsSubscribe`, `stopJob` are unchanged.
+* **Implemented: plugin hooks are asynchronous by default.** Each plugin has
+  an ordered queue (one plugin sees its events in order; plugins run in
+  parallel). A plugin opts a trigger back into synchronous execution by
+  prefixing it with `sync:` in its YAML, e.g.
+  `triggeredBy: [sync:Scene.Update.Post]`.
+* **Later (with PostgreSQL):** durable jobs (a row per job with kind, JSON
+  input, priority) executed by a separate `worker` container; with SQLite a
+  second process would only contend for the single writer.
 
 ### Configuration
 The single `config.yml` is split by consumer:
 
 | Part | Stored in | Consumers |
 |---|---|---|
-| System (paths, DB, cache, fsd address, secrets) | environment / compose `.env` | containers at start |
-| Settings (general, interface, scraping, dlna, defaults, stash-boxes, library paths) | PostgreSQL `settings`, cached in-process + Valkey, invalidated via pub/sub | GraphQL `configuration`, plugins, all services |
-| Plugin registry (installed/enabled plugins, package sources, per-plugin settings) | PostgreSQL | scheduler + api; plugins only see their own settings through GraphQL as before |
-| UI config (`configuration.ui`, incl. tagger `fingerprintQueue`) | browser IndexedDB via service worker | browser only; pushed to the server only via **Settings → Tools → Troubleshooting → Sync UI configuration to server** |
+| System (container paths, database, fsd address and secret) | environment / compose `.env` (`STASH_*`) | containers at start |
+| Settings (general, interface, scraping, dlna, defaults, stash-boxes, library paths, plugin settings, package sources) | `config.yml` in the `config` volume, held in memory (koanf) — reads never touch the disk | GraphQL `configuration`, plugins, scheduler |
+| UI config (`configuration.ui`, incl. tagger `fingerprintQueue`) | browser IndexedDB via service worker (Apollo-link fallback without a secure context) | browser only; pushed to the server only via **Settings → Tools → Troubleshooting → Sync UI configuration to server** |
 | Windows service | `stash-fsd.toml` on Windows | stash-fsd |
 
+All container paths in the settings are Unix paths (`python_path:
+/usr/bin/python3`, `plugins_path: /config/plugins`); only library paths are
+Windows paths. Moving settings into a database table is planned together with
+PostgreSQL, when more than one process needs them.
+
 ### Caching
-* Settings: in-process snapshot (zero I/O per request) + Valkey, version
-  bumped on every write.
-* Read query cache: identical read-only GraphQL operations (same query,
-  variables, user) are coalesced (singleflight) and cached in Valkey keyed by
-  a global data generation counter that is incremented on every committed
-  write — correct by construction, and it collapses the "same request three
-  times" pattern caused by plugins.
+* **Implemented:** identical read-only GraphQL operations (same document,
+  variables, user) are coalesced (singleflight) and cached in process, keyed
+  by a global data generation counter (`txn.Generation`) that is bumped after
+  every committed write transaction and on configuration changes, plugin and
+  scraper reloads and finished jobs. The generation is captured before
+  execution, so a result that raced a write is never stored. Scrapers, jobs,
+  logs, directory listings and random walls are never cached. This collapses
+  the "same request three times" pattern caused by plugins, including the
+  ever-repeated `configuration` query.
+* With one API process an in-process cache is strictly faster than a network
+  cache. Valkey becomes useful (shared cache, pub/sub invalidation, job
+  progress fan-out) once there are several processes — i.e. with PostgreSQL
+  and a separate worker.
 
 ## Repository layout (new parts)
 
@@ -138,7 +162,11 @@ The single `config.yml` is split by consumer:
 proto/stashfs/v1/        gRPC contract between Go and the Windows service
 windows/stash-fsd/       Rust Windows service (cross-compiled in Docker)
 pkg/remotefs/            Go client for stash-fsd (models.FS implementation)
-pkg/sqlite/              data layer, ported to PostgreSQL (renamed at the end)
+pkg/remotefs/localserver Go reference implementation of the contract (tests, Linux dev)
+pkg/file/library.go      LibraryFS + RoutingFS: library paths -> stash-fsd, others -> local
+pkg/ffmpeg/remote.go     runs ffmpeg/ffprobe with library inputs on stash-fsd
+cmd/stash-pathfix/       converts an existing database to canonical library paths
+cmd/fsd-smoke/           end-to-end gRPC smoke test against a running stash-fsd
 deploy/                  docker compose stack, nginx gateway, Dockerfiles
 scripts/dev/             containerised toolchain wrappers (no host installs)
 docs/architecture/       this document and per-component notes
@@ -146,16 +174,17 @@ docs/architecture/       this document and per-component notes
 
 ## Phases
 
-| Phase | Content | Gate |
+| Phase | Content | Status |
 |---|---|---|
-| P0 | Toolchain harness, this document, proto contract | `scripts/dev/build.sh` passes |
-| P1 | PostgreSQL port of the data layer (**deferred**, SQLite kept for now) | existing `integration` test suite passes against PostgreSQL |
-| P2 | `stash-fsd` filesystem + hashing, `pkg/remotefs`, scanner on top of it | library scan from Docker |
-| P3 | ffmpeg on Windows (probe, screenshots, previews, sprites, phash, markers), direct streaming via gateway | generate + play |
-| P4 | Durable job queue + worker/scheduler, async hooks | jobs API unchanged, hooks async |
-| P5 | Config split, settings cache, read-query cache, api/worker role split | compose stack up |
-| P6 | UI: IndexedDB + service worker for UI config, troubleshooting sync button | UI works with server-side `ui` untouched |
-| P7 | `import-sqlite` migration tool with path rewriting | import of a real DB |
+| P0 | Toolchain harness, this document, proto contract | done |
+| P1 | PostgreSQL port of the data layer | **deferred** (SQLite kept) |
+| P2 | `stash-fsd` filesystem + hashing, `pkg/remotefs`, scanner on top of it | done |
+| P3 | ffmpeg on Windows (probe, screenshots, previews, sprites, phash, markers), direct streaming via gateway | done (no live transcoding in v1) |
+| P4 | Lane scheduler, async hooks with `sync:` opt-in | done; durable worker deferred with P1 |
+| P5 | Read-query cache, config split | done (in process); Valkey deferred with P1 |
+| P6 | UI: IndexedDB + service worker for UI config, troubleshooting sync button | done |
+| P7 | Path conversion of an existing database (`cmd/stash-pathfix`) | done |
+| — | DLNA served from Windows | open |
 
 ## Development
 
