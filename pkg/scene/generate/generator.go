@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/stashapp/stash/pkg/ffmpeg"
@@ -97,11 +99,69 @@ func (g Generator) generateFile(lockCtx *fsutil.LockContext, p Paths, pattern st
 		return fmt.Errorf("ffmpeg command produced no output")
 	}
 
-	if err := fsutil.SafeMove(tmpFn, output); err != nil {
+	if err := replaceFile(tmpFn, output); err != nil {
 		return fmt.Errorf("moving %s to %s failed: %w", tmpFn, output, err)
 	}
 
 	return nil
+}
+
+// replaceFile moves the generated file src to dst, replacing dst if it exists.
+// The rename fails when src and dst are on different mounts (Tmp is in the
+// generated volume, screenshots can be a separate bind mount), and the copy
+// fallback of fsutil.SafeMove refuses to overwrite. So src is copied next to
+// dst and that copy renamed over dst, which stays on dst's mount and replaces
+// dst in one step. fsutil.SafeMove keeps refusing, as it also moves library files.
+func replaceFile(src, dst string) error {
+	renameErr := os.Rename(src, dst)
+	if renameErr == nil {
+		return nil
+	}
+
+	if err := copyOver(src, dst); err != nil {
+		return fmt.Errorf("copying file failed with: '%w'; renaming file failed previously with: '%v'", err, renameErr)
+	}
+
+	_ = os.Remove(src)
+	return nil
+}
+
+// copyOver copies src into a temporary file in dst's directory and renames it over dst.
+func copyOver(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	// the leading dot keeps clean generated from taking a leftover for a generated file
+	staged, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	stagedFn := staged.Name()
+
+	_, err = io.Copy(staged, in)
+	if err == nil {
+		// os.CreateTemp uses 0600: keep the permissions a rename would have kept
+		err = staged.Chmod(info.Mode().Perm())
+	}
+	if closeErr := staged.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(stagedFn, dst)
+	}
+	if err != nil {
+		_ = os.Remove(stagedFn)
+	}
+
+	return err
 }
 
 // generateBytes performs a generate operation by generating a temporary file using p and pattern, returns the contents, then deletes it.
