@@ -6,6 +6,7 @@ import os
 import pathlib
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -117,6 +118,34 @@ class LibfsTest(unittest.TestCase):
         self.assertFalse(stash_libfs.is_library_path("/data/x.mp4"))
         self.assertFalse(stash_libfs.is_library_path(3))
         self.assertTrue(stash_libfs.is_library_path("UNC:/nas/share/x.mp4"))
+
+    def test_pathlib_imported_after_install(self):
+        # sitecustomize installs before any plugin code runs, so pathlib
+        # (< 3.11: _NormalAccessor) usually sees the replaced functions
+        script = textwrap.dedent(
+            """\
+            import sys
+            sys.path.insert(0, sys.argv[1])
+            import stash_libfs
+            assert "pathlib" not in sys.modules
+            stash_libfs.HELPER = sys.argv[2]
+            assert stash_libfs.install()
+            import pathlib
+            local = pathlib.Path(sys.argv[3], "after.txt")
+            local.write_text("x", encoding="utf-8")
+            assert local.read_text(encoding="utf-8") == "x"
+            assert local.exists() and local in list(local.parent.iterdir())
+            assert "Ünïcode" in pathlib.Path("U:/Videos/Perf/scene.nfo").read_text(encoding="utf-8")
+            assert pathlib.Path("U:/Videos/Perf").is_dir()
+            assert [p.name for p in pathlib.Path("U:/Videos/Perf").iterdir()] == ["scene.jpg", "scene.nfo"]
+            """
+        )
+        proc = subprocess.run(
+            [sys.executable, "-S", "-c", script, os.path.dirname(os.path.abspath(stash_libfs.__file__)),
+             stash_libfs.HELPER, self.tmp],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout.decode("utf-8", "replace"))
 
 
 if __name__ == "__main__":

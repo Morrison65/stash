@@ -17,6 +17,7 @@ Python 3.8+ compatible: plugin environments use several Python versions.
 
 import builtins
 import errno
+import functools
 import io
 import json
 import os
@@ -236,6 +237,20 @@ def _access(path, mode, *args, **kwargs):
     return _orig["access"](path, mode, *args, **kwargs)
 
 
+class _Unbound(object):
+    """Calls fn, and like the builtins it replaces it does not bind as a
+    method: pathlib < 3.11 keeps os.stat, io.open, ... as class attributes of
+    _NormalAccessor, and a plain function there would get the accessor as its
+    first argument when pathlib is imported after install()."""
+
+    def __init__(self, fn):
+        self._fn = fn
+        functools.update_wrapper(self, fn)
+
+    def __call__(self, *args, **kwargs):
+        return self._fn(*args, **kwargs)
+
+
 def install():
     """Routes library paths through stash-libfs (idempotent)."""
     if _orig or not os.environ.get("STASH_FSD_ADDRESS"):
@@ -250,13 +265,15 @@ def install():
         scandir=os.scandir,
         access=os.access,
     )
-    builtins.open = _open
-    io.open = _open
-    os.stat = _stat
-    os.lstat = _lstat
-    os.listdir = _listdir
-    os.scandir = _scandir
-    os.access = _access
+    fns = dict(open=_Unbound(_open), stat=_Unbound(_stat), lstat=_Unbound(_lstat),
+               listdir=_Unbound(_listdir), scandir=_Unbound(_scandir), access=_Unbound(_access))
+    builtins.open = fns["open"]
+    io.open = fns["open"]
+    os.stat = fns["stat"]
+    os.lstat = fns["lstat"]
+    os.listdir = fns["listdir"]
+    os.scandir = fns["scandir"]
+    os.access = fns["access"]
 
     # Python < 3.11: pathlib keeps the functions it saw when it was imported
     import sys
@@ -264,8 +281,7 @@ def install():
     pathlib = sys.modules.get("pathlib")
     accessor = getattr(pathlib, "_NormalAccessor", None)
     if accessor is not None:
-        for name, fn in (("stat", _stat), ("lstat", _lstat), ("open", _open),
-                         ("listdir", _listdir), ("scandir", _scandir)):
+        for name in ("stat", "lstat", "open", "listdir", "scandir"):
             if hasattr(accessor, name):
-                setattr(accessor, name, staticmethod(fn))
+                setattr(accessor, name, fns[name])
     return True
