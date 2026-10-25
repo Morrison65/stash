@@ -61,7 +61,7 @@ at once.
 (`U:/Videos/$performer`, `UNC:/server/share/...`). Changes apply after an API
 restart. `dry_run: true` only logs what would be renamed.
 
-`docker-workspace/make-stash-microservices-config.py` disables the
+`docker-workspace/scripts/make-stash-microservices-config.py` disables the
 renamerOnUpdate plugin in the microservice config when `renamer.yml` exists.
 
 ## Differences to the plugin
@@ -91,7 +91,7 @@ The engine is compared with the plugin's own code over a real library:
 # 1. dump organized scenes and studios (read-only GraphQL)
 python scripts/dev/renamer-golden/dump.py <dir>/data.json
 # 2. /data -> Windows maps of the classic stack
-python docker-workspace/make-stash-microservices-config.py --output NUL --print-maps > <dir>/maps.txt
+python docker-workspace/scripts/make-stash-microservices-config.py --output NUL --print-maps > <dir>/maps.txt
 # 3. the plugin's results, in an offline container with its Python
 docker run --rm --network none -e PYTHONHASHSEED=0 -v <dir>:/w \
   -v <stash-home>/plugins/community/renamerOnUpdate:/plugin:ro --entrypoint python \
