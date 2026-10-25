@@ -106,12 +106,15 @@ type RoutingFS struct {
 	IsRemote func(path string) bool
 }
 
-func (r *RoutingFS) pick(path string) LibraryFS {
-	isRemote := r.IsRemote
-	if isRemote == nil {
-		isRemote = IsWindowsPath
+func (r *RoutingFS) isRemote(path string) bool {
+	if r.IsRemote == nil {
+		return IsWindowsPath(path)
 	}
-	if isRemote(path) {
+	return r.IsRemote(path)
+}
+
+func (r *RoutingFS) pick(path string) LibraryFS {
+	if r.isRemote(path) {
 		return r.Remote
 	}
 	return r.Local
@@ -147,7 +150,15 @@ func (r *RoutingFS) Rename(oldpath, newpath string) error {
 }
 func (r *RoutingFS) Remove(path string) error    { return r.pick(path).Remove(path) }
 func (r *RoutingFS) RemoveAll(path string) error { return r.pick(path).RemoveAll(path) }
+
+// MoveToTrash prefers a ".stash-trash" folder above a library file (see
+// LibraryTrashDirName) over trashDir, so a delete stays on the file's drive.
 func (r *RoutingFS) MoveToTrash(path string, trashDir string) (string, error) {
+	if r.isRemote(path) {
+		if local := libraryTrashDir(r.Remote, path); local != "" {
+			trashDir = local
+		}
+	}
 	return r.pick(path).MoveToTrash(path, trashDir)
 }
 

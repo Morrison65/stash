@@ -98,6 +98,16 @@ walk_batch_size         = 512
 level = "info"   # error|warn|info|debug|trace
 ```
 
+## Trash
+
+A deleted library file goes to the nearest `.stash-trash` folder above it
+(searched up to its drive or share root, `pkg/file/library_trash.go`), so the
+move stays on the same drive or share and is a rename. Only without such a
+folder does it go to the configured `delete_trash_path`, which may be on
+another drive (a copy). This matches the classic stack's per-drive trash
+patch; the folders must be inside the `roots` below and excluded from scans
+(`/\.stash-trash/`).
+
 ## Running
 
 ```
