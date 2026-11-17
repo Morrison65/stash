@@ -23,7 +23,7 @@ const network = vi.fn(
         operation.operationName === "Configuration"
           ? { configuration: { ui: serverUI, plugins: {} } }
           : { configureUISetting: serverUI },
-    } as FetchResult)
+    }) as FetchResult
 );
 
 const terminating = new ApolloLink(

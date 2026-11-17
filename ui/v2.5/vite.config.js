@@ -1,11 +1,9 @@
-import path from "path";
+import path from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import legacy from "@vitejs/plugin-legacy";
 import tsconfigPaths from "vite-tsconfig-paths";
 import viteCompression from "vite-plugin-compression";
 
-const nolegacy = process.env.VITE_APP_NOLEGACY === "true";
 const sourcemap = process.env.VITE_APP_SOURCEMAPS === "true";
 
 // public/sw.js removes the former UI config service worker from browsers
@@ -14,7 +12,7 @@ const serviceWorkerFile = "sw.js";
 
 // https://vitejs.dev/config/
 export default defineConfig(() => {
-  let plugins = [
+  const plugins = [
     react({
       babel: {
         compact: true,
@@ -31,10 +29,6 @@ export default defineConfig(() => {
         path.basename(file) !== serviceWorkerFile,
     }),
   ];
-
-  if (!nolegacy) {
-    plugins = [...plugins, legacy()];
-  }
 
   return {
     base: "",

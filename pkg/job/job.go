@@ -102,9 +102,10 @@ func (j *Job) TimeElapsed() time.Duration {
 }
 
 func (j *Job) cancel() {
-	if j.Status == StatusReady {
+	switch j.Status {
+	case StatusReady:
 		j.Status = StatusCancelled
-	} else if j.Status == StatusRunning {
+	case StatusRunning:
 		j.Status = StatusStopping
 	}
 

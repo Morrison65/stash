@@ -1,8 +1,7 @@
 import {
   ApolloClient,
   InMemoryCache,
-  split,
-  from,
+  ApolloLink,
   ServerError,
   TypePolicies,
 } from "@apollo/client";
@@ -172,7 +171,7 @@ Please disable it on the server and refresh the page.`);
     }
   });
 
-  const splitLink = split(
+  const splitLink = ApolloLink.split(
     ({ query }) => {
       const definition = getMainDefinition(query);
       return (
@@ -187,7 +186,7 @@ Please disable it on the server and refresh the page.`);
   // keeps configuration.ui in IndexedDB (see docs/architecture/ui-config.md)
   const uiConfigLink = createUIConfigLink({ graphqlURL: url.toString() });
 
-  const link = from([errorLink, uiConfigLink, splitLink]);
+  const link = ApolloLink.from([errorLink, uiConfigLink, splitLink]);
 
   const cache = new InMemoryCache({
     typePolicies,

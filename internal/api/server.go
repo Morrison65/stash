@@ -124,6 +124,7 @@ func Initialize() (*Server, error) {
 
 	r.Use(middleware.Heartbeat("/healthz"))
 	r.Use(cors.AllowAll().Handler)
+	r.Use(RequestIPMiddleware)
 	r.Use(authenticateHandler())
 	visitedPluginHandler := mgr.SessionStore.VisitedPluginHandler()
 	r.Use(visitedPluginHandler)
@@ -640,6 +641,7 @@ type contextKey struct {
 
 var (
 	BaseURLCtxKey = &contextKey{"BaseURL"}
+	IPCtxKey      = &contextKey{"requestIP"}
 )
 
 func BaseURLMiddleware(next http.Handler) http.Handler {

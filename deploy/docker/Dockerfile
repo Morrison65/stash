@@ -17,7 +17,7 @@ ARG PLUGIN_RUNTIME_IMAGE=alpine:3.22
 FROM node:24-alpine AS ui
 RUN apk add --no-cache make git && npm install -g pnpm
 WORKDIR /stash
-COPY ui/v2.5/package.json ui/v2.5/pnpm-lock.yaml ui/v2.5/
+COPY ui/v2.5/package.json ui/v2.5/pnpm-lock.yaml ui/v2.5/pnpm-workspace.yaml ui/v2.5/
 RUN cd ui/v2.5 && pnpm install --frozen-lockfile
 COPY Makefile ./
 COPY graphql graphql/
@@ -29,7 +29,7 @@ RUN make generate-ui && BUILD_DATE=$(date +"%Y-%m-%d %H:%M:%S") make ui-only
 # ---------------------------------------------------------------------------
 # Go build
 # ---------------------------------------------------------------------------
-FROM golang:1.24-alpine AS backend
+FROM golang:1.25-alpine AS backend
 RUN apk add --no-cache make alpine-sdk
 WORKDIR /stash
 COPY go.mod go.sum ./

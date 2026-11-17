@@ -67,7 +67,7 @@ export function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 function hasOwn(o: object, k: string) {
-  return Object.prototype.hasOwnProperty.call(o, k);
+  return Object.hasOwn(o, k);
 }
 
 function getOwn(o: Record<string, unknown>, k: string): unknown {
@@ -190,7 +190,7 @@ export function analyzeOperation(
       if (uiKeys.length === 0) return;
       const key = responseKey(f);
       const set = byKey.get(key) ?? new Set<string>();
-      uiKeys.forEach((k) => set.add(k));
+      for (const k of uiKeys) set.add(k);
       byKey.set(key, set);
     });
 

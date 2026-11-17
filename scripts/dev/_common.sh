@@ -15,7 +15,7 @@ else
 	HOST_REPO="$REPO_ROOT"
 fi
 
-GO_IMAGE="${GO_IMAGE:-golang:1.24-bookworm}"
+GO_IMAGE="${GO_IMAGE:-golang:1.25-bookworm}"
 RUST_IMAGE="${RUST_IMAGE:-stash-fsd-builder:latest}"
 NODE_IMAGE="${NODE_IMAGE:-node:24-alpine}"
 
