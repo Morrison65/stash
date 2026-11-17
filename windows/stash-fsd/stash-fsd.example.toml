@@ -18,9 +18,19 @@ shared_secret = "change-me-to-a-long-random-string"
 #
 # The service runs as LocalSystem, which does not see drive letters mapped by
 # a user. Prefer UNC roots for NAS storage. The share must then be accessible
-# to the machine account (DOMAIN\HOST$); otherwise run the service as a user
-# account that has access to the share.
+# to the machine account (DOMAIN\HOST$), or get a login below.
 roots = ["D:/Media", '\\LIL_NAS_X\MainStoragePool\StashLib']
+
+# Optional: logins for UNC shares the machine account cannot open. At start the
+# service connects each share with this user (WNetAddConnection2, no drive
+# letter) and retries every minute while it fails; the service stays
+# LocalSystem. The password is plain text here: keep this file readable for
+# administrators and SYSTEM only. print-config redacts it; logs never show it.
+#
+# [[access.unc_login]]
+# share    = '\\LIL_NAS_X\MainStoragePool'
+# user     = "nasuser"
+# password = "..."
 
 [tools]
 ffmpeg  = ""   # e.g. "C:/ffmpeg/bin/ffmpeg.exe"; empty = ffmpeg on PATH

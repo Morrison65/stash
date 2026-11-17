@@ -33,6 +33,20 @@ pub struct ServerConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct AccessConfig {
     pub roots: Vec<String>,
+    /// Logins for UNC shares, connected at start (see `unc.rs`). Lets the
+    /// LocalSystem service reach a NAS that does not accept the machine account.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unc_login: Vec<UncLogin>,
+}
+
+/// One `[[access.unc_login]]` entry.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct UncLogin {
+    /// `\\server\share` (any form `roots` accepts; only server and share are used).
+    pub share: String,
+    pub user: String,
+    pub password: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -208,6 +222,14 @@ impl Config {
         if self.storage.workspace_dir.trim().is_empty() {
             bail!("storage.workspace_dir is empty");
         }
+        for (i, l) in self.access.unc_login.iter().enumerate() {
+            if crate::unc::share_root(&l.share).is_none() {
+                bail!("access.unc_login[{i}].share {:?} is not a UNC share (\\\\server\\share)", l.share);
+            }
+            if l.user.trim().is_empty() {
+                bail!("access.unc_login[{i}].user is empty");
+            }
+        }
         Roots::new(&self.access.roots, paths::host_case_insensitive())
     }
 
@@ -223,15 +245,19 @@ impl Config {
         self.limits.walk_batch_size.clamp(1, 65536) as usize
     }
 
-    /// TOML rendering with the secret redacted.
+    /// TOML rendering with the secret and the UNC passwords redacted.
     pub fn redacted_toml(&self) -> String {
+        fn redact(s: &str) -> String {
+            match s.len() {
+                0 => String::new(),
+                n => format!("<redacted, {n} characters>"),
+            }
+        }
         let mut c = self.clone();
-        let n = c.server.shared_secret.len();
-        c.server.shared_secret = if n == 0 {
-            String::new()
-        } else {
-            format!("<redacted, {n} characters>")
-        };
+        c.server.shared_secret = redact(&c.server.shared_secret);
+        for l in &mut c.access.unc_login {
+            l.password = redact(&l.password);
+        }
         toml::to_string_pretty(&c).unwrap_or_default()
     }
 }
@@ -307,5 +333,50 @@ mod tests {
         let s = c.redacted_toml();
         assert!(!s.contains("0123456789abcdef0123"));
         assert!(s.contains("redacted"));
+    }
+
+    const UNC_LOGIN: &str = r#"
+[server]
+shared_secret = "0123456789abcdef0123"
+[access]
+roots = ["C:/media"]
+[[access.unc_login]]
+share = '\\NAS\Pool'
+user = "nasuser"
+password = "s3cret-pw"
+"#;
+
+    #[test]
+    fn parses_unc_login() {
+        let c = Config::parse(UNC_LOGIN).unwrap();
+        assert_eq!(c.access.unc_login.len(), 1);
+        assert_eq!(c.access.unc_login[0].share, r"\\NAS\Pool");
+        assert_eq!(c.access.unc_login[0].user, "nasuser");
+        assert_eq!(c.access.unc_login[0].password, "s3cret-pw");
+    }
+
+    #[test]
+    fn unc_login_needs_share_and_user() {
+        let mut c = valid();
+        c.access.unc_login = vec![UncLogin { share: "C:/media".into(), user: "u".into(), password: "p".into() }];
+        assert!(c.validate().unwrap_err().to_string().contains("not a UNC share"));
+        c.access.unc_login = vec![UncLogin { share: r"\\NAS\Pool".into(), user: " ".into(), password: "p".into() }];
+        assert!(c.validate().unwrap_err().to_string().contains("user is empty"));
+        c.access.unc_login[0].user = "u".into();
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn redacts_unc_password() {
+        let c = Config::parse(UNC_LOGIN).unwrap();
+        let s = c.redacted_toml();
+        assert!(!s.contains("s3cret-pw"));
+        assert!(s.contains("nasuser"));
+        assert!(s.contains("<redacted, 9 characters>"));
+    }
+
+    #[test]
+    fn no_unc_login_section_when_unused() {
+        assert!(!valid().redacted_toml().contains("unc_login"));
     }
 }

@@ -21,6 +21,7 @@ mod paths;
 mod prio;
 mod server;
 mod state;
+mod unc;
 mod walk;
 #[cfg(windows)]
 mod winsvc;

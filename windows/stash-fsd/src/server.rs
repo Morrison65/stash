@@ -25,6 +25,18 @@ const WORKSPACE_MAX_AGE: Duration = Duration::from_secs(24 * 3600);
 
 pub async fn run(cfg: Config, shutdown: impl Future<Output = ()> + Send + 'static) -> Result<()> {
     let roots = cfg.validate()?;
+    // Authenticated SMB connections for [[access.unc_login]], in the background:
+    // WNetAddConnection2W blocks while a NAS is unreachable (boot), which must not
+    // delay the service start. Failed logins are retried every minute.
+    if !cfg.access.unc_login.is_empty() {
+        let logins = cfg.access.unc_login.clone();
+        tokio::spawn(async move {
+            let pending = tokio::task::spawn_blocking(move || crate::unc::connect_all(&logins))
+                .await
+                .unwrap_or_default();
+            crate::unc::retry_until_connected(pending).await;
+        });
+    }
     let grpc_addr: SocketAddr = cfg.server.grpc_listen.parse()?;
     let http_addr: SocketAddr = cfg.server.http_listen.parse()?;
     let st = AppState::new(cfg, roots);

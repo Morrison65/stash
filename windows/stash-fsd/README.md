@@ -52,8 +52,13 @@ LocalSystem does not see drive letters that a user mapped to network shares.
 For NAS storage, use UNC roots such as
 `'\\LIL_NAS_X\MainStoragePool\StashLib'`; UNC avoids drive-mapping problems.
 The share must then be accessible to the machine account (`DOMAIN\HOST$`).
-Otherwise, run the service as a user account that has access to the share
-(`sc.exe config stash-fsd obj= .\user password= ...`).
+Otherwise give the share a login in `[[access.unc_login]]` (`share`, `user`,
+`password`): the service, still LocalSystem, connects it at start with
+`WNetAddConnection2` and retries every minute while that fails (log lines
+`unc_login: …`, never with the password). Logins stored for LocalSystem in the
+Credential Manager were not usable on a Windows 11 Home host (error 1312), so
+the config is the reliable place. Keep `stash-fsd.toml` readable for
+administrators and SYSTEM only.
 
 ### Firewall
 
@@ -83,6 +88,7 @@ in `log_dir`.
 | `server.http_listen` | `0.0.0.0:7701` | `/healthz`, signed `/raw` |
 | `server.shared_secret` | — | required, ≥ 16 chars |
 | `access.roots` | — | required; case-insensitive prefix match on path components |
+| `access.unc_login` | none | optional list of `{ share, user, password }`; connected at start, retried every 60 s |
 | `tools.ffmpeg` / `tools.ffprobe` | on `PATH` | |
 | `storage.workspace_dir` | `%ProgramData%\stash-fsd\work` | ffmpeg workspaces; abandoned ones are removed after 24 h |
 | `storage.log_dir` | `%ProgramData%\stash-fsd\logs` | |
