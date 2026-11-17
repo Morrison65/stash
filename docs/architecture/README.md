@@ -189,7 +189,12 @@ docs/architecture/       this document and per-component notes
 
 ## Development
 
-No toolchains are needed on the host; everything runs in Docker:
+Use Docker Desktop on Windows with its WSL 2 backend for container work. In
+Ubuntu, open this checkout and run the following commands. Enabling Docker
+Desktop's integration for the Ubuntu distribution provides its native Docker
+CLI; when integration is unavailable, these scripts can use `docker.exe`
+for a checkout on a Windows drive (`/mnt/c/...`). The fallback uses the same
+Docker daemon and does not change or restart the live stack.
 
 ```
 scripts/dev/build.sh                       # generate + build + vet all Go code
@@ -197,3 +202,16 @@ scripts/dev/gotest.sh ./pkg/...            # Go unit tests
 scripts/dev/pg-test.sh                     # data-layer integration tests on PostgreSQL
 scripts/dev/fsd-build.sh                   # cross-compile stash-fsd.exe
 ```
+
+For Windows-specific filesystem behavior, run the Rust tests on Windows in
+PowerShell after building the `stash-fsd-builder:latest` image with
+`scripts/dev/fsd-build.sh`:
+
+```powershell
+pwsh -NoProfile -File scripts/dev/fsd-test-windows.ps1
+```
+
+This cross-compiles the tests in the builder container and runs the test
+executable natively on Windows. It does not install or start the service.
+The production stack and its filesystem service have separate configuration;
+do not point development tests at live library data.

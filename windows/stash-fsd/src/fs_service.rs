@@ -491,7 +491,7 @@ mod tests {
         assert_eq!(s.read_file(rf(0, 0, 999)).await.err().unwrap().code(), tonic::Code::FailedPrecondition);
 
         let cs = s.is_path_case_sensitive(pr(format!("{r}/b.mp4"))).await.unwrap().into_inner();
-        assert!(cs.value);
+        assert_eq!(cs.value, !root.join("B.mp4").exists());
     }
 
     #[tokio::test]

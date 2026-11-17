@@ -252,7 +252,7 @@ mod tests {
     fn valid() -> Config {
         let mut c = Config::default();
         c.server.shared_secret = "0123456789abcdef0123".into();
-        c.access.roots = vec!["/media".into()];
+        c.access.roots = vec![if cfg!(windows) { "C:/media" } else { "/media" }.into()];
         c
     }
 

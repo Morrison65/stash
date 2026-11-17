@@ -296,12 +296,11 @@ mod tests {
     }
 
     #[test]
-    fn case_sensitivity_on_linux_tmp() {
+    fn case_sensitivity_on_tmp() {
         let d = tempfile::tempdir().unwrap();
         let f = d.path().join("Video.mp4");
         fs::write(&f, b"x").unwrap();
-        // ext4/overlayfs are case sensitive
-        assert!(is_path_case_sensitive(&wp(&f)).unwrap());
+        assert_eq!(is_path_case_sensitive(&wp(&f)).unwrap(), !d.path().join("video.mp4").exists());
         assert!(is_path_case_sensitive(&wp(&d.path().join("missing"))).is_err());
     }
 }

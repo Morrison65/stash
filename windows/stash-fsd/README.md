@@ -14,6 +14,11 @@ scripts/dev/fsd-build.sh            # cargo test (Linux) + cross-compile -> wind
 scripts/dev/fsd-build.sh test walk  # any cargo command inside the toolchain container
 ```
 
+To compile the tests in Docker and execute them natively on Windows, run
+`pwsh -NoProfile -File scripts/dev/fsd-test-windows.ps1` from the repository
+root after the builder image has been created. This exercises Windows-specific
+code without installing or starting the service.
+
 The toolchain image `stash-fsd-builder:latest` is built from
 `Dockerfile.build` on first use (`FSD_REBUILD_IMAGE=1` forces a rebuild).
 Cargo caches live in the `stashms-cargo-registry`, `stashms-cargo-git` and

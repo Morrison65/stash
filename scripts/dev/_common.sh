@@ -11,6 +11,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export MSYS_NO_PATHCONV=1
 if command -v cygpath >/dev/null 2>&1; then
 	HOST_REPO="$(cygpath -w "$REPO_ROOT")"
+elif [ -n "${WSL_DISTRO_NAME:-}" ] && ! docker info >/dev/null 2>&1 && command -v docker.exe >/dev/null 2>&1; then
+	# Docker Desktop integration may be disabled. The Windows CLI can still
+	# reach the same daemon; its bind sources must be Windows paths.
+	HOST_REPO="$(wslpath -w "$REPO_ROOT")"
+	DOCKER_WINDOWS_CLI=1
+	docker() { command docker.exe "$@"; }
 else
 	HOST_REPO="$REPO_ROOT"
 fi
@@ -28,6 +34,9 @@ if [ -t 1 ]; then DOCKER_TTY=(-t); fi
 # test data that must not be in the repository (pkg/renamer golden test).
 DEV_MOUNT_ARGS=()
 if [ -n "${DEV_MOUNT:-}" ]; then
+	if [ "${DOCKER_WINDOWS_CLI:-0}" = 1 ]; then
+		DEV_MOUNT="$(wslpath -w "$DEV_MOUNT")"
+	fi
 	DEV_MOUNT_ARGS=(-v "$DEV_MOUNT:/mnt/dev:ro")
 fi
 

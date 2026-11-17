@@ -19,6 +19,8 @@ if [ -n "${FSD_REBUILD_IMAGE:-}" ] || ! docker image inspect "$RUST_IMAGE" >/dev
 	echo ">> building $RUST_IMAGE"
 	if command -v cygpath >/dev/null 2>&1; then
 		ctx="$(cygpath -w "$FSD_DIR")"
+	elif [ "${DOCKER_WINDOWS_CLI:-0}" = 1 ]; then
+		ctx="$(wslpath -w "$FSD_DIR")"
 	else
 		ctx="$FSD_DIR"
 	fi
